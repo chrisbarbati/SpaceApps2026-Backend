@@ -45,7 +45,11 @@ class BackendApiIntegrationTest {
 
     private static final AtomicReference<String> receivedRequestId = new AtomicReference<>();
 
+    private static final AtomicReference<String> receivedFieldsQuery = new AtomicReference<>();
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
+
+    private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
 
     private static HttpServer dataBackend;
 
@@ -63,6 +67,8 @@ class BackendApiIntegrationTest {
         summaryRequestBody.set(null);
         cropHistoryRequestBody.set(null);
         receivedRequestId.set(null);
+        receivedFieldsQuery.set(null);
+        soilMoistureAvailable.set(true);
     }
 
     /**
@@ -122,10 +128,20 @@ class BackendApiIntegrationTest {
         assertEquals(200, daily.statusCode());
         assertEquals(12.5, json(daily).get("properties").get("parameter").get("T2M").get("20240101").asDouble());
 
-        HttpResponse<String> fields = get("/fields?limit=5&cursor=0");
+        HttpResponse<String> soilMoisture = get("/soil-moisture");
+        assertEquals(200, soilMoisture.statusCode());
+        assertEquals("FeatureCollection", json(soilMoisture).get("type").asString());
+        assertEquals(0.4, json(soilMoisture).get("features").get(0).get("properties")
+                .get("sm_rootzone").asDouble());
+        assertEquals("m3/m3", json(soilMoisture).get("metadata").get("variables")
+                .get("sm_surface").get("units").asString());
+
+        HttpResponse<String> fields = get("/fields");
         assertEquals(200, fields.statusCode());
         assertEquals("FeatureCollection", json(fields).get("type").asString());
         assertEquals("field-1", json(fields).get("features").get(0).get("id").asString());
+        assertTrue(receivedFieldsQuery.get().contains("limit=50"));
+        assertTrue(receivedFieldsQuery.get().contains("cursor=0"));
 
         HttpResponse<String> area = get("/fields/field-1");
         assertEquals(200, area.statusCode());
@@ -176,6 +192,54 @@ class BackendApiIntegrationTest {
         assertTrue(openApi.get("paths").has("/crop-history"));
         assertTrue(openApi.get("paths").has("/crops"));
         assertTrue(openApi.get("paths").has("/crop-optimization"));
+        assertTrue(openApi.get("paths").has("/soil-moisture"));
+    }
+
+    /**
+     * Submits the crop-optimization request example published in OpenAPI to the
+     * running Java application and confirms the real planner returns a plan.
+     *
+     * @throws Exception if the OpenAPI example or optimization response is invalid
+     */
+    @Test
+    void openApiCropOptimizationExampleReturnsARealPlan() throws Exception {
+        JsonNode openApi = JSON.readTree(get("/v3/api-docs").body());
+        JsonNode example = openApi.get("paths")
+                .get("/crop-optimization")
+                .get("post")
+                .get("requestBody")
+                .get("content")
+                .get("application/json")
+                .get("examples")
+                .get("valid-field-plan")
+                .get("value");
+        String requestBody = example.isString() ? example.asString() : example.toString();
+
+        HttpResponse<String> response = post("/crop-optimization", requestBody);
+
+        assertEquals(200, response.statusCode());
+        JsonNode result = json(response);
+        assertEquals("random-placeholder", result.get("planner").asString());
+        assertTrue(result.get("temporary").asBoolean());
+        assertEquals(1, result.get("plans").size());
+        assertEquals("ftw-2025-17TPK_0_0-13020", result.get("plans").get(0).get("fieldId").asString());
+        assertEquals(5, result.get("plans").get(0).get("years").size());
+    }
+
+    /**
+     * Verifies that an unavailable SMAP cache or upstream is returned with the
+     * same 503 status and detail as Python.
+     *
+     * @throws Exception if the error response cannot be decoded
+     */
+    @Test
+    void preservesSoilMoistureUnavailableStatus() throws Exception {
+        soilMoistureAvailable.set(false);
+
+        HttpResponse<String> response = get("/soil-moisture");
+
+        assertEquals(503, response.statusCode());
+        assertEquals("SMAP cache unavailable", json(response).get("detail").asString());
     }
 
     /**
@@ -329,7 +393,15 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/daily-point")) {
             response = "{\"type\":\"Feature\",\"geometry\":null,"
                     + "\"properties\":{\"parameter\":{\"T2M\":{\"20240101\":12.5}}}}";
+        } else if (path.equals("/soil-moisture")) {
+            if (soilMoistureAvailable.get()) {
+                response = soilMoistureResponse();
+            } else {
+                status = 503;
+                response = "{\"detail\":\"SMAP cache unavailable\"}";
+            }
         } else if (path.equals("/fields")) {
+            receivedFieldsQuery.set(exchange.getRequestURI().getRawQuery());
             response = "{\"type\":\"FeatureCollection\",\"features\":["
                     + "{\"type\":\"Feature\",\"id\":\"field-1\","
                     + "\"properties\":{\"id\":\"field-1\",\"score\":88},"
@@ -408,6 +480,33 @@ class BackendApiIntegrationTest {
                 + "\"name\":\"Soybeans\",\"isCrop\":true,\"share\":0.967}]}],"
                 + "\"rotation\":[\"Soybeans\"],\"distinctCrops\":[\"Soybeans\"],"
                 + "\"cropYears\":1,\"unavailableYears\":[],\"note\":\"Satellite classification\"}";
+    }
+
+    /**
+     * Returns a representative SMAP response used by the local data API stub.
+     *
+     * @return a one-cell soil-moisture GeoJSON response
+     */
+    private static String soilMoistureResponse() {
+        return "{\"type\":\"FeatureCollection\",\"features\":["
+                + "{\"type\":\"Feature\",\"id\":\"smap-1-1\","
+                + "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},"
+                + "\"properties\":{\"row\":1,\"column\":1,\"sm_surface\":null,"
+                + "\"sm_rootzone\":0.4,\"soil_temp_layer1\":280.15}}],"
+                + "\"metadata\":{\"source\":\"NASA SMAP L4\",\"product\":\"SPL4SMGP\","
+                + "\"version\":\"008\",\"schema_version\":2,"
+                + "\"variables\":{\"sm_surface\":{\"units\":\"m3/m3\","
+                + "\"description\":\"Soil moisture, 0-5 cm\",\"product\":\"SPL4SMGP\",\"static\":false}},"
+                + "\"missing_variables\":[\"soil_temp_layer6\"],\"doi\":\"10.5067/T5RUATAQREF8\","
+                + "\"url\":\"https://example.test/smap\",\"spatial_resolution_km\":9,"
+                + "\"temporal_resolution_hours\":3,\"units\":\"m3/m3\","
+                + "\"depth_cm\":{\"sm_surface\":[0,5],\"sm_rootzone\":[0,100]},"
+                + "\"requested_bbox\":[-79.7,44.35,-79.05,44.85],\"granule\":\"smap-granule\","
+                + "\"time_start\":\"2026-11-14T00:00:00Z\",\"time_end\":\"2026-11-14T03:00:00Z\","
+                + "\"built\":\"2026-11-14T04:00:00+00:00\",\"limitations\":\"Model-assimilated cells\","
+                + "\"soil_constants\":{\"product\":\"SPL4SMLM\",\"version\":\"008\","
+                + "\"science_version\":\"v8010\",\"granule\":\"constants.h5\","
+                + "\"url\":\"https://example.test/constants\",\"static\":true}}}";
     }
 
     /**

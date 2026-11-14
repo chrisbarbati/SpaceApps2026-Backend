@@ -17,6 +17,7 @@ import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
+import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -68,6 +69,18 @@ class DataBackendServiceUnitTest {
 
         assertSame(response, service.readiness());
         verify(client).readiness();
+    }
+
+    /**
+     * Verifies that the SMAP layer operation delegates to the client.
+     */
+    @Test
+    void delegatesSoilMoistureRequest() {
+        SoilMoistureResponse expected = new SoilMoistureResponse("FeatureCollection", List.of(), null);
+        when(client.soilMoisture()).thenReturn(expected);
+
+        assertSame(expected, service.soilMoisture());
+        verify(client).soilMoisture();
     }
 
     /**

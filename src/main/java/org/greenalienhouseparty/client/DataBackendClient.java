@@ -15,6 +15,7 @@ import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
+import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -124,6 +125,24 @@ public class DataBackendClient {
             }));
         } finally {
             log.trace("Exiting readiness()");
+        }
+    }
+
+    /**
+     * Retrieves the cached or newly acquired NASA SMAP GeoJSON layer.
+     *
+     * @return native-grid soil-moisture cells and SMAP metadata
+     */
+    public SoilMoistureResponse soilMoisture() {
+        log.trace("Entering soilMoisture()");
+        log.debug("Calling Python data backend GET /soil-moisture");
+        try {
+            return execute(() -> restClient.get()
+                    .uri("/soil-moisture")
+                    .retrieve()
+                    .body(SoilMoistureResponse.class));
+        } finally {
+            log.trace("Exiting soilMoisture()");
         }
     }
 

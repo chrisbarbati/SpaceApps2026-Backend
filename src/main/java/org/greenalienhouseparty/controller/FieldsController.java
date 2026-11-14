@@ -50,7 +50,7 @@ public class FieldsController {
     public FieldsResponse listFields(
             @RequestParam(required = false)
             @Parameter(description = "west,south,east,north; defaults to the Orillia area") String bbox,
-            @RequestParam(defaultValue = "500")
+            @RequestParam(defaultValue = "50")
             @Parameter(description = "Maximum features per page") int limit,
             @RequestParam(defaultValue = "0")
             @Parameter(description = "nextCursor from the previous page") int cursor) {

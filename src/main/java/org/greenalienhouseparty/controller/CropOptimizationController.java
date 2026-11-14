@@ -10,6 +10,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -44,7 +47,38 @@ public class CropOptimizationController {
     @PostMapping("/crop-optimization")
     @Operation(summary = "Generate five-year crop plans",
             description = "Returns a random placeholder plan from each farmer's growable crops. "
-                    + "The result is not an agronomic recommendation and must be reviewed locally.")
+                    + "The result is not an agronomic recommendation and must be reviewed locally.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Field geometry, current crop, growable crops, and optional planting-ready date.",
+                    required = true,
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = CropOptimizationRequest.class),
+                            examples = @ExampleObject(
+                                    name = "valid-field-plan",
+                                    summary = "A field with its current crop and growable crops",
+                                    value = """
+                                            {
+                                              "fields": [
+                                                {
+                                                  "fieldId": "ftw-2025-17TPK_0_0-13020",
+                                                  "geometry": {
+                                                    "type": "Polygon",
+                                                    "coordinates": [[
+                                                      [-79.159, 44.349],
+                                                      [-79.150, 44.349],
+                                                      [-79.150, 44.355],
+                                                      [-79.159, 44.355],
+                                                      [-79.159, 44.349]
+                                                    ]]
+                                                  },
+                                                  "currentCrop": "Corn",
+                                                  "growableCrops": ["Soybeans", "Wheat", "Oats"],
+                                                  "readyDate": "2027-04-15"
+                                                }
+                                              ]
+                                            }
+                                            """))))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Temporary five-year plans were created."),
             @ApiResponse(responseCode = "422", description = "Missing field data or unsupported crop choices.")

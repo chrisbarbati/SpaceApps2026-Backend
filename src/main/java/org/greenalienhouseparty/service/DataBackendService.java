@@ -11,6 +11,7 @@ import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
+import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -67,6 +68,21 @@ public class DataBackendService {
             return client.readiness();
         } finally {
             log.trace("Exiting readiness()");
+        }
+    }
+
+    /**
+     * Retrieves the SMAP soil-moisture layer through the Python data backend.
+     *
+     * @return GeoJSON cells with typed SMAP metadata
+     */
+    public SoilMoistureResponse soilMoisture() {
+        log.trace("Entering soilMoisture()");
+        log.debug("Requesting the SMAP soil-moisture layer from the data backend");
+        try {
+            return client.soilMoisture();
+        } finally {
+            log.trace("Exiting soilMoisture()");
         }
     }
 

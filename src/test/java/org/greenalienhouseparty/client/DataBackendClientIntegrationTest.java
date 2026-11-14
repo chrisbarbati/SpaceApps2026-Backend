@@ -18,6 +18,7 @@ import org.greenalienhouseparty.config.RequestIdFilter;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
+import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.slf4j.MDC;
 import org.junit.jupiter.api.Test;
 
@@ -59,6 +60,8 @@ class DataBackendClientIntegrationTest {
                 response = "{\"type\":\"Feature\",\"geometry\":null,"
                         + "\"properties\":{\"parameter\":{\"T2M\":{\"20240101\":12.5}}},"
                         + "\"header\":{\"title\":\"NASA POWER\"}}";
+            } else if (path.equals("/soil-moisture")) {
+                response = soilMoistureResponse();
             } else if (path.equals("/fields")) {
                 response = "{\"type\":\"FeatureCollection\",\"features\":["
                         + "{\"type\":\"Feature\",\"id\":\"field-1\","
@@ -113,6 +116,16 @@ class DataBackendClientIntegrationTest {
             var daily = client.dailyPoint(44.6, -79.4, "20240101", "20240107", "T2M");
             assertEquals(12.5, daily.getProperties().getParameter().get("T2M").get("20240101").asDouble());
             assertEquals("NASA POWER", daily.getExtra().get("header").get("title").asString());
+
+            SoilMoistureResponse soilMoisture = client.soilMoisture();
+            assertEquals("FeatureCollection", soilMoisture.type());
+            assertEquals(9, soilMoisture.metadata().spatialResolutionKm());
+            assertEquals("m3/m3", soilMoisture.metadata().variables().get("sm_surface").units());
+            assertEquals(1, soilMoisture.features().getFirst().properties().getRow());
+            assertTrue(soilMoisture.features().getFirst().properties().getMeasurements().get("sm_surface").isNull());
+            assertEquals(0.4, soilMoisture.features().getFirst().properties().getMeasurements()
+                    .get("sm_rootzone").asDouble());
+            assertEquals("SPL4SMLM", soilMoisture.metadata().soilConstants().product());
 
             var fields = client.listFields("0,0,1,1", 20, 0);
             assertEquals(1, fields.numberReturned());
@@ -207,6 +220,28 @@ class DataBackendClientIntegrationTest {
     }
 
     /**
+     * Confirms SMAP provider errors preserve their upstream HTTP status and
+     * structured detail.
+     *
+     * @throws Exception if the local HTTP server cannot be started
+     */
+    @Test
+    void preservesSoilMoistureProviderError() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/soil-moisture", exchange -> respond(exchange, 502,
+                "{\"detail\":\"NASA SMAP request failed; retry later\"}"));
+        server.start();
+        try {
+            DataBackendException exception = assertThrows(
+                    DataBackendException.class, () -> client(server).soilMoisture());
+            assertEquals(502, exception.getStatusCode());
+            assertEquals("\"NASA SMAP request failed; retry later\"", exception.getDetail().toString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
      * Creates a client pointed at the given local HTTP server.
      *
      * @param server the local upstream server
@@ -260,6 +295,34 @@ class DataBackendClientIntegrationTest {
                 + "{\"code\":158,\"name\":\"Soybeans\",\"isCrop\":true,\"share\":0.967}]}],"
                 + "\"rotation\":[\"Soybeans\"],\"distinctCrops\":[\"Soybeans\"],"
                 + "\"cropYears\":1,\"unavailableYears\":[],\"note\":\"Satellite classification\"}";
+    }
+
+    /**
+     * Returns a representative single-cell SMAP response including nullable
+     * measurements and variable provenance.
+     *
+     * @return a small soil-moisture FeatureCollection payload
+     */
+    private static String soilMoistureResponse() {
+        return "{\"type\":\"FeatureCollection\",\"features\":["
+                + "{\"type\":\"Feature\",\"id\":\"smap-1-1\","
+                + "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},"
+                + "\"properties\":{\"row\":1,\"column\":1,\"sm_surface\":null,"
+                + "\"sm_rootzone\":0.4,\"soil_temp_layer1\":280.15}}],"
+                + "\"metadata\":{\"source\":\"NASA SMAP L4\",\"product\":\"SPL4SMGP\","
+                + "\"version\":\"008\",\"schema_version\":2,"
+                + "\"variables\":{\"sm_surface\":{\"units\":\"m3/m3\","
+                + "\"description\":\"Soil moisture, 0-5 cm\",\"product\":\"SPL4SMGP\",\"static\":false}},"
+                + "\"missing_variables\":[\"soil_temp_layer6\"],\"doi\":\"10.5067/T5RUATAQREF8\","
+                + "\"url\":\"https://example.test/smap\",\"spatial_resolution_km\":9,"
+                + "\"temporal_resolution_hours\":3,\"units\":\"m3/m3\","
+                + "\"depth_cm\":{\"sm_surface\":[0,5],\"sm_rootzone\":[0,100]},"
+                + "\"requested_bbox\":[-79.7,44.35,-79.05,44.85],\"granule\":\"smap-granule\","
+                + "\"time_start\":\"2026-11-14T00:00:00Z\",\"time_end\":\"2026-11-14T03:00:00Z\","
+                + "\"built\":\"2026-11-14T04:00:00+00:00\",\"limitations\":\"Model-assimilated cells\","
+                + "\"soil_constants\":{\"product\":\"SPL4SMLM\",\"version\":\"008\","
+                + "\"science_version\":\"v8010\",\"granule\":\"constants.h5\","
+                + "\"url\":\"https://example.test/constants\",\"static\":true}}}";
     }
 
     /**
