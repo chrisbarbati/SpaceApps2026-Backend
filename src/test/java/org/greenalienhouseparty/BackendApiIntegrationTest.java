@@ -52,6 +52,8 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean fieldDatabaseUp = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> greennessQuery = new AtomicReference<>();
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
@@ -76,6 +78,7 @@ class BackendApiIntegrationTest {
         soilMoistureAvailable.set(true);
         batchRequestBodies.clear();
         fieldDatabaseUp.set(true);
+        greennessQuery.set(null);
     }
 
     /**
@@ -419,6 +422,39 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies field greenness passes the optional year through and returns the
+     * season unchanged, and that errors keep their status.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsFieldGreenness() throws Exception {
+        HttpResponse<String> response = get("/fields/field-1/greenness?year=2024");
+
+        assertEquals(200, response.statusCode());
+        assertEquals("year=2024", greennessQuery.get());
+        JsonNode body = json(response);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals("2024-04-01", body.get("period").get("start").asString());
+        assertEquals("2024-07-14", body.get("observations").get(0).get("date").asString());
+        assertEquals(0.77, body.get("observations").get(0).get("ndvi").asDouble());
+        assertEquals(0.84, body.get("observations").get(0).get("ndviP90").asDouble());
+        assertEquals("2024-07-14", body.get("summary").get("peakDate").asString());
+        assertTrue(body.get("summary").get("greenUpDate").isNull());
+        assertEquals("sentinel-2-c1-l2a", body.get("source").get("collection").asString());
+
+        get("/fields/field-1/greenness");
+        assertEquals("null", greennessQuery.get());
+
+        assertEquals(404, get("/fields/missing/greenness").statusCode());
+        HttpResponse<String> providerFailure = get("/fields/provider-error/greenness");
+        assertEquals(502, providerFailure.statusCode());
+        assertEquals("Earth Search (Sentinel-2 catalogue) is unavailable", json(providerFailure).get("detail").asString());
+        assertEquals(422, get("/fields/field-1/greenness?year=soon").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/fields/{field_id}/greenness"));
+    }
+
+    /**
      * Verifies that upstream HTTP failures retain their status and detail in
      * the public Java API response.
      *
@@ -493,6 +529,22 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/provider-error/crop-history")) {
             status = 502;
             response = "{\"detail\":\"AAFC Annual Crop Inventory is unavailable\"}";
+        } else if (path.equals("/fields/field-1/greenness")) {
+            greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\",\"year\":2024,"
+                    + "\"period\":{\"start\":\"2024-04-01\",\"end\":\"2024-11-15\"},"
+                    + "\"observations\":[{\"date\":\"2024-07-14\",\"ndvi\":0.77,\"ndviP10\":0.66,"
+                    + "\"ndviP90\":0.84,\"clearShare\":1.0}],"
+                    + "\"summary\":{\"peakNdvi\":0.77,\"peakDate\":\"2024-07-14\",\"latestNdvi\":0.77,"
+                    + "\"latestDate\":\"2024-07-14\",\"greenUpDate\":null},"
+                    + "\"scenesChecked\":22,\"scenesUnreadable\":0,"
+                    + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
+                    + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\","
+                    + "\"resolutionM\":10,\"license\":\"Copernicus Sentinel data, free and open\"},"
+                    + "\"note\":\"Mean NDVI over the clear part of the field\"}";
+        } else if (path.equals("/fields/provider-error/greenness")) {
+            status = 502;
+            response = "{\"detail\":\"Earth Search (Sentinel-2 catalogue) is unavailable\"}";
         } else if (path.equals("/fields/crop-history")) {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             batchRequestBodies.add(body);

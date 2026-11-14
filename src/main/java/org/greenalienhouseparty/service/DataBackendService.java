@@ -13,6 +13,7 @@ import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
+import org.greenalienhouseparty.dto.FieldGreennessResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
@@ -206,6 +207,23 @@ public class DataBackendService {
             return client.cropHistory(request);
         } finally {
             log.trace("Exiting cropHistory()");
+        }
+    }
+
+    /**
+     * Retrieves Sentinel-2 greenness through one growing season for a stored field.
+     *
+     * @param fieldId the field identifier
+     * @param year    growing season year, or {@code null} for the most recent season
+     * @return clear-sky NDVI observations and a season summary
+     */
+    public FieldGreennessResponse fieldGreenness(String fieldId, Integer year) {
+        log.trace("Entering fieldGreenness()");
+        log.debug("Requesting field greenness from the data backend");
+        try {
+            return client.fieldGreenness(fieldId, year);
+        } finally {
+            log.trace("Exiting fieldGreenness()");
         }
     }
 

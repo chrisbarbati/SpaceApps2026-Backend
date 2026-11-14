@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.greenalienhouseparty.config.RequestIdFilter;
@@ -14,6 +15,7 @@ import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
+import org.greenalienhouseparty.dto.FieldGreennessResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
@@ -341,6 +343,29 @@ public class DataBackendClient {
                     .body(FieldCropHistoryBatchResponse.class));
         } finally {
             log.trace("Exiting fieldCropHistories()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field greenness endpoint. The first request for a
+     * field and season reads Sentinel-2 imagery and takes about 10 seconds.
+     *
+     * @param fieldId the field identifier
+     * @param year    growing season year, or {@code null} for the most recent season
+     * @return clear-sky NDVI observations and a season summary
+     */
+    public FieldGreennessResponse fieldGreenness(String fieldId, Integer year) {
+        log.trace("Entering fieldGreenness()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/greenness");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/greenness")
+                            .queryParamIfPresent("year", Optional.ofNullable(year))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(FieldGreennessResponse.class));
+        } finally {
+            log.trace("Exiting fieldGreenness()");
         }
     }
 

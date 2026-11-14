@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
+import org.greenalienhouseparty.dto.FieldGreennessResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -234,6 +235,19 @@ class DataBackendServiceUnitTest {
         }
         assertThrows(InvalidRequestException.class, () -> service.fieldCropHistories(null));
         verify(client, never()).fieldCropHistories(anyList());
+    }
+
+    /**
+     * Verifies that field greenness delegates to the client with the requested year.
+     */
+    @Test
+    void delegatesFieldGreenness() {
+        FieldGreennessResponse expected = new FieldGreennessResponse(
+                "field-1", 2024, null, List.of(), null, 0, 0, null, null);
+        when(client.fieldGreenness("field-1", 2024)).thenReturn(expected);
+
+        assertSame(expected, service.fieldGreenness("field-1", 2024));
+        verify(client).fieldGreenness("field-1", 2024);
     }
 
     /**
