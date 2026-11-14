@@ -390,6 +390,16 @@ class BackendApiIntegrationTest {
         assertEquals("field-2", results.get(0).get("id").asString());
         assertEquals("ok", results.get(0).get("status").asString());
         assertEquals("Soybeans", results.get(0).get("history").get("rotation").get(0).asString());
+        JsonNode summary = results.get(0).get("history").get("summary");
+        assertEquals("A 3-year rotation: corn, corn, then soybeans.", summary.get("pattern").get("text").asString());
+        assertEquals("Corn", summary.get("expectedThisYear").get("crop").asString());
+        assertEquals("high", summary.get("expectedThisYear").get("confidence").asString());
+        assertEquals(2025, summary.get("lastSeason").get("year").asInt());
+        assertEquals(15, summary.get("yearsOfData").asInt());
+        assertTrue(!summary.get("flags").get("possiblyMerged").asBoolean());
+        assertEquals("soybeans", results.get(0).get("history").get("years").get(0).get("group").asString());
+        assertEquals("Soybeans", results.get(0).get("history").get("years").get(0).get("groupLabel").asString());
+        assertEquals(0.996, results.get(0).get("history").get("years").get(0).get("cropShare").asDouble());
         assertTrue(!results.get(0).has("error"));
         assertTrue(!results.get(0).has("ok"));
         assertEquals("missing", results.get(1).get("id").asString());
@@ -697,10 +707,19 @@ class BackendApiIntegrationTest {
                 + "\"source\":{\"name\":\"AAFC Annual Crop Inventory\",\"url\":\"https://example.test/aci\","
                 + "\"license\":\"Open Government Licence - Canada\",\"resolutionM\":30},"
                 + "\"years\":[{\"year\":2025,\"crop\":\"Soybeans\",\"code\":158,"
-                + "\"isCrop\":true,\"share\":0.967,\"classes\":[{\"code\":158,"
+                + "\"isCrop\":true,\"group\":\"soybeans\",\"groupLabel\":\"Soybeans\",\"share\":0.967,\"cropShare\":0.996,\"classes\":[{\"code\":158,"
                 + "\"name\":\"Soybeans\",\"isCrop\":true,\"share\":0.967}]}],"
                 + "\"rotation\":[\"Soybeans\"],\"distinctCrops\":[\"Soybeans\"],"
-                + "\"cropYears\":1,\"unavailableYears\":[],\"note\":\"Satellite classification\"}";
+                + "\"cropYears\":1,\"unavailableYears\":[],"
+                + "\"summary\":{\"yearsOfData\":15,\"firstYear\":2011,"
+                + "\"lastSeason\":{\"year\":2025,\"crop\":\"Soybeans\",\"group\":\"soybeans\",\"groupLabel\":\"Soybeans\"},"
+                + "\"pattern\":{\"kind\":\"rotation\",\"periodYears\":3,\"groups\":[\"corn\",\"soybeans\"],"
+                + "\"text\":\"A 3-year rotation: corn, corn, then soybeans.\"},"
+                + "\"expectedThisYear\":{\"year\":2026,\"group\":\"corn\",\"crop\":\"Corn\",\"confidence\":\"high\","
+                + "\"reason\":\"Soybeans in 2025, so the pattern points to corn this year.\"},"
+                + "\"flags\":{\"possiblyMerged\":false,\"mostlyNotCropland\":false},"
+                + "\"notes\":[\"The newest crop map is 2025 (last season); 2026 is not mapped yet.\"]},"
+                + "\"note\":\"Satellite classification\"}";
     }
 
     /**

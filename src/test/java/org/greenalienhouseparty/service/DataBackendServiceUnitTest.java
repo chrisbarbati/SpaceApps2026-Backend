@@ -168,7 +168,7 @@ class DataBackendServiceUnitTest {
     @Test
     void delegatesFieldCropHistoryRequest() {
         CropHistoryResponse expected = new CropHistoryResponse(
-                "field-1", null, List.of(), List.of(), List.of(), 0, List.of(), "outside coverage");
+                "field-1", null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.fieldCropHistory("field-1")).thenReturn(expected);
 
         assertSame(expected, service.fieldCropHistory("field-1"));
@@ -183,7 +183,7 @@ class DataBackendServiceUnitTest {
     void delegatesCropHistoryRequest() {
         CropHistoryRequest request = new CropHistoryRequest();
         CropHistoryResponse expected = new CropHistoryResponse(
-                null, null, List.of(), List.of(), List.of(), 0, List.of(), "outside coverage");
+                null, null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.cropHistory(request)).thenReturn(expected);
 
         assertSame(expected, service.cropHistory(request));
@@ -317,7 +317,7 @@ class DataBackendServiceUnitTest {
                         ? new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.ERROR, null,
                                 new FieldCropHistoryBatchResponse.Error(404, "Field not found"))
                         : new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.OK,
-                                new CropHistoryResponse(id, null, List.of(), List.of(), List.of(), 0, List.of(), null), null))
+                                new CropHistoryResponse(id, null, List.of(), List.of(), List.of(), 0, List.of(), null, null), null))
                 .toList();
         int ok = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
         return new FieldCropHistoryBatchResponse(results, results.size(), ok, results.size() - ok);
