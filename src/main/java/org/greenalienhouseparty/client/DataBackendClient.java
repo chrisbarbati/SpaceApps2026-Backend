@@ -1,7 +1,11 @@
 package org.greenalienhouseparty.client;
 
 import java.io.IOException;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 import org.greenalienhouseparty.config.RequestIdFilter;
@@ -9,6 +13,7 @@ import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
@@ -21,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -52,15 +58,29 @@ public class DataBackendClient {
     /**
      * Creates the client.
      *
+     * <p>Requests use HTTP/1.1, which the Python service speaks, so the JDK client
+     * does not attempt an HTTP/2 upgrade on every call. Connections time out after
+     * 5 seconds and responses after {@code data.backend.read-timeout} (default 90
+     * seconds, enough for 100 uncached fields of crop history), so a stalled upstream cannot hold request threads indefinitely.</p>
+     *
      * @param objectMapper the configured JSON mapper, used to parse error bodies
      * @param baseUrl     the Python backend base URL (see {@code data.backend.url})
+     * @param readTimeout maximum wait for a data backend response
      */
     public DataBackendClient(
              ObjectMapper objectMapper,
-            @Value("${data.backend.url:http://localhost:8000}") String baseUrl) {
+            @Value("${data.backend.url:http://localhost:8000}") String baseUrl,
+            @Value("${data.backend.read-timeout:90s}") Duration readTimeout) {
         log.trace("Entering DataBackendClient constructor");
+        HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(readTimeout);
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
                 .requestInterceptor((request, body, execution) -> {
                     String requestId = MDC.get(RequestIdFilter.MDC_KEY);
                     if (requestId != null) {
@@ -299,6 +319,28 @@ public class DataBackendClient {
                     .body(CropHistoryResponse.class));
         } finally {
             log.trace("Exiting cropHistory()");
+        }
+    }
+
+    /**
+     * Calls the data backend's multi-field crop history endpoint for at most
+     * 100 field IDs.
+     *
+     * @param ids the field identifiers, at most 100
+     * @return one result per unique requested field, in request order
+     */
+    public FieldCropHistoryBatchResponse fieldCropHistories(List<String> ids) {
+        log.trace("Entering fieldCropHistories()");
+        log.debug("Calling Python data backend POST /fields/crop-history for {} fields", ids.size());
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/fields/crop-history")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("ids", ids))
+                    .retrieve()
+                    .body(FieldCropHistoryBatchResponse.class));
+        } finally {
+            log.trace("Exiting fieldCropHistories()");
         }
     }
 

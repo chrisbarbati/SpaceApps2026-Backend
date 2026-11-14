@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.Year;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -47,6 +48,10 @@ class BackendApiIntegrationTest {
 
     private static final AtomicReference<String> receivedFieldsQuery = new AtomicReference<>();
 
+    private static final List<String> batchRequestBodies = new CopyOnWriteArrayList<>();
+
+    private static final AtomicBoolean fieldDatabaseUp = new AtomicBoolean(true);
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
@@ -69,6 +74,8 @@ class BackendApiIntegrationTest {
         receivedRequestId.set(null);
         receivedFieldsQuery.set(null);
         soilMoistureAvailable.set(true);
+        batchRequestBodies.clear();
+        fieldDatabaseUp.set(true);
     }
 
     /**
@@ -344,6 +351,60 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies multi-field crop history through the public API: request order,
+     * de-duplication, per-field errors, and documentation.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsCropHistoryForSeveralFields() throws Exception {
+        HttpResponse<String> response = post("/fields/crop-history",
+                "{\"ids\":[\"field-2\",\"missing\",\" field-1 \",\"field-2\"]}");
+
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals(3, body.get("requested").asInt());
+        assertEquals(2, body.get("succeeded").asInt());
+        assertEquals(1, body.get("failed").asInt());
+        JsonNode results = body.get("results");
+        assertEquals("field-2", results.get(0).get("id").asString());
+        assertEquals("ok", results.get(0).get("status").asString());
+        assertEquals("Soybeans", results.get(0).get("history").get("rotation").get(0).asString());
+        assertTrue(!results.get(0).has("error"));
+        assertTrue(!results.get(0).has("ok"));
+        assertEquals("missing", results.get(1).get("id").asString());
+        assertEquals(404, results.get(1).get("error").get("code").asInt());
+        assertTrue(!results.get(1).has("history"));
+        assertEquals("field-1", results.get(2).get("id").asString());
+        assertEquals(1, batchRequestBodies.size());
+        assertEquals("[\"field-2\",\"missing\",\"field-1\"]", JSON.readTree(batchRequestBodies.get(0)).get("ids").toString());
+
+        JsonNode openApi = json(get("/v3/api-docs"));
+        assertTrue(openApi.get("paths").has("/fields/crop-history"));
+    }
+
+    /**
+     * Verifies that invalid selections are rejected without calling the data
+     * backend, and that a data backend outage keeps its status.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void rejectsInvalidSelectionsAndPropagatesOutages() throws Exception {
+        for (String body : List.of("{\"ids\":[]}", "{}", "{\"ids\":[\" \"]}", "{\"ids\":\"field-1\"}")) {
+            HttpResponse<String> invalid = post("/fields/crop-history", body);
+            assertEquals(422, invalid.statusCode(), body);
+            assertTrue(json(invalid).has("detail"));
+        }
+        assertTrue(batchRequestBodies.isEmpty());
+
+        fieldDatabaseUp.set(false);
+        HttpResponse<String> outage = post("/fields/crop-history", "{\"ids\":[\"field-1\"]}");
+        assertEquals(503, outage.statusCode());
+        assertEquals("Field boundary database is unavailable or invalid", json(outage).get("detail").asString());
+    }
+
+    /**
      * Verifies that upstream HTTP failures retain their status and detail in
      * the public Java API response.
      *
@@ -415,6 +476,33 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/provider-error/crop-history")) {
             status = 502;
             response = "{\"detail\":\"AAFC Annual Crop Inventory is unavailable\"}";
+        } else if (path.equals("/fields/crop-history")) {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            batchRequestBodies.add(body);
+            if (!fieldDatabaseUp.get()) {
+                status = 503;
+                response = "{\"detail\":\"Field boundary database is unavailable or invalid\"}";
+            } else {
+                StringBuilder results = new StringBuilder();
+                int ok = 0;
+                for (JsonNode id : JSON.readTree(body).get("ids")) {
+                    String fieldId = id.asString();
+                    if (!results.isEmpty()) {
+                        results.append(',');
+                    }
+                    if (fieldId.equals("missing")) {
+                        results.append("{\"id\":\"missing\",\"status\":\"error\","
+                                + "\"error\":{\"code\":404,\"detail\":\"Field not found\"}}");
+                    } else {
+                        ok++;
+                        results.append("{\"id\":\"").append(fieldId).append("\",\"status\":\"ok\",\"history\":")
+                                .append(cropHistoryResponse(null)).append('}');
+                    }
+                }
+                int total = JSON.readTree(body).get("ids").size();
+                response = "{\"results\":[" + results + "],\"requested\":" + total
+                        + ",\"succeeded\":" + ok + ",\"failed\":" + (total - ok) + "}";
+            }
         } else if (path.equals("/crop-history")) {
             cropHistoryRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             if (cropHistoryRequestBody.get().contains("\"extra\"")) {

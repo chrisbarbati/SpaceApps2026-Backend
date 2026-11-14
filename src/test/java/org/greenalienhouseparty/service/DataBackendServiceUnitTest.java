@@ -1,12 +1,23 @@
 package org.greenalienhouseparty.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.greenalienhouseparty.client.DataBackendClient;
+import org.mockito.ArgumentCaptor;
+import org.greenalienhouseparty.exception.InvalidRequestException;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -172,5 +183,74 @@ class DataBackendServiceUnitTest {
 
         assertSame(expected, service.cropHistory(request));
         verify(client).cropHistory(request);
+    }
+
+    /**
+     * Verifies that a large selection is trimmed, de-duplicated and sent to the
+     * data backend in ordered groups of 100, and that the groups' results are
+     * combined in request order with recomputed counts.
+     */
+    @Test
+    void splitsFieldCropHistoriesIntoGroupsOf100() {
+        List<String> ids = new ArrayList<>();
+        for (int n = 0; n < 250; n++) {
+            ids.add(n == 0 ? " field-0 " : "field-" + n);
+        }
+        ids.add("field-7");
+        when(client.fieldCropHistories(anyList())).thenAnswer(call -> batch(call.getArgument(0)));
+
+        FieldCropHistoryBatchResponse response = service.fieldCropHistories(new FieldCropHistoryBatchRequest(ids));
+
+        ArgumentCaptor<List<String>> groups = ArgumentCaptor.captor();
+        verify(client, times(3)).fieldCropHistories(groups.capture());
+        assertEquals(List.of(100, 100, 50), groups.getAllValues().stream().map(List::size).toList());
+        assertEquals("field-0", groups.getAllValues().get(0).get(0));
+        assertEquals("field-249", groups.getAllValues().get(2).get(49));
+        assertEquals(250, response.requested());
+        assertEquals(249, response.succeeded());
+        assertEquals(1, response.failed());
+        assertEquals("field-0", response.results().get(0).id());
+        assertEquals("field-249", response.results().get(249).id());
+    }
+
+    /**
+     * Verifies that invalid selections are rejected before the data backend is
+     * called.
+     */
+    @Test
+    void rejectsInvalidFieldCropHistoryRequests() {
+        List<String> tooMany = new ArrayList<>();
+        for (int n = 0; n <= 300; n++) {
+            tooMany.add("field-" + n);
+        }
+        List<FieldCropHistoryBatchRequest> invalid = List.of(
+                new FieldCropHistoryBatchRequest(null),
+                new FieldCropHistoryBatchRequest(List.of()),
+                new FieldCropHistoryBatchRequest(Arrays.asList("field-1", null)),
+                new FieldCropHistoryBatchRequest(List.of("field-1", "  ")),
+                new FieldCropHistoryBatchRequest(tooMany));
+        for (FieldCropHistoryBatchRequest request : invalid) {
+            assertThrows(InvalidRequestException.class, () -> service.fieldCropHistories(request));
+        }
+        assertThrows(InvalidRequestException.class, () -> service.fieldCropHistories(null));
+        verify(client, never()).fieldCropHistories(anyList());
+    }
+
+    /**
+     * Builds a data backend response for one group, failing {@code field-13}.
+     *
+     * @param ids the group's field IDs
+     * @return one result per ID
+     */
+    private static FieldCropHistoryBatchResponse batch(List<String> ids) {
+        List<FieldCropHistoryBatchResponse.Result> results = ids.stream()
+                .map(id -> id.equals("field-13")
+                        ? new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.ERROR, null,
+                                new FieldCropHistoryBatchResponse.Error(404, "Field not found"))
+                        : new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.OK,
+                                new CropHistoryResponse(id, null, List.of(), List.of(), List.of(), 0, List.of(), null), null))
+                .toList();
+        int ok = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
+        return new FieldCropHistoryBatchResponse(results, results.size(), ok, results.size() - ok);
     }
 }

@@ -70,6 +70,26 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Translates request validation failures found by this application into the
+     * API's standard 422 error response.
+     *
+     * @param exception the rejected request
+     * @return an unprocessable-entity response with a detail message
+     */
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidRequestException(InvalidRequestException exception) {
+        log.trace("Entering handleInvalidRequestException()");
+        log.warn("Handling invalid request: {}", exception.getMessage());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("detail", exception.getMessage());
+        try {
+            return ResponseEntity.unprocessableEntity().body(body);
+        } finally {
+            log.trace("Exiting handleInvalidRequestException()");
+        }
+    }
+
+    /**
      * Translates requests rejected by Spring's HTTP binding into the 422
      * validation status used by the Python data API.
      *

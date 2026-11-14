@@ -1,5 +1,6 @@
 package org.greenalienhouseparty.client;
 
+import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -248,7 +249,7 @@ class DataBackendClientIntegrationTest {
      * @return a client configured for that server
      */
     private DataBackendClient client(HttpServer server) {
-        return new DataBackendClient(JSON, "http://127.0.0.1:" + server.getAddress().getPort());
+        return new DataBackendClient(JSON, "http://127.0.0.1:" + server.getAddress().getPort(), Duration.ofSeconds(5));
     }
 
     /**

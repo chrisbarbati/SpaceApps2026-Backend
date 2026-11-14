@@ -1,17 +1,25 @@
 package org.greenalienhouseparty.service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 import org.greenalienhouseparty.client.DataBackendClient;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -199,5 +207,71 @@ public class DataBackendService {
         } finally {
             log.trace("Exiting cropHistory()");
         }
+    }
+
+    /** Field IDs the data backend accepts per request. */
+    static final int DATA_BACKEND_BATCH_SIZE = 100;
+
+    /**
+     * Field IDs accepted per request to this application. Uncached fields take
+     * about 0.3 seconds each, so 300 stays within the 100-second limit of the
+     * proxy in front of this service even when nothing is cached.
+     */
+    static final int MAX_FIELDS_PER_REQUEST = 300;
+
+    /**
+     * Retrieves crop history for several stored fields.
+     *
+     * <p>IDs are trimmed and de-duplicated in first-seen order, then sent to the
+     * data backend in groups of {@value #DATA_BACKEND_BATCH_SIZE}, one group at a
+     * time so the crop map providers behind it are not flooded. The groups'
+     * results are combined in request order. A field that fails is reported in
+     * its own result; only a failure of the whole data backend call fails the
+     * request.</p>
+     *
+     * @param request the field IDs
+     * @return one result per unique requested field, in request order
+     * @throws InvalidRequestException when no IDs, a blank ID, or more than
+     *                                 {@value #MAX_FIELDS_PER_REQUEST} unique IDs are given
+     */
+    public FieldCropHistoryBatchResponse fieldCropHistories(FieldCropHistoryBatchRequest request) {
+        log.trace("Entering fieldCropHistories()");
+        try {
+            List<String> ids = uniqueFieldIds(request);
+            log.debug("Requesting crop history for {} fields in groups of {}", ids.size(), DATA_BACKEND_BATCH_SIZE);
+            List<FieldCropHistoryBatchResponse.Result> results = new ArrayList<>(ids.size());
+            for (int from = 0; from < ids.size(); from += DATA_BACKEND_BATCH_SIZE) {
+                List<String> group = ids.subList(from, Math.min(from + DATA_BACKEND_BATCH_SIZE, ids.size()));
+                results.addAll(client.fieldCropHistories(group).results());
+            }
+            int succeeded = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
+            return new FieldCropHistoryBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
+        } finally {
+            log.trace("Exiting fieldCropHistories()");
+        }
+    }
+
+    /**
+     * Validates, trims and de-duplicates requested field IDs, keeping their order.
+     *
+     * @param request the field IDs
+     * @return unique, trimmed field IDs
+     * @throws InvalidRequestException when the IDs are missing, blank or too many
+     */
+    private List<String> uniqueFieldIds(FieldCropHistoryBatchRequest request) {
+        if (request == null || request.ids() == null || request.ids().isEmpty()) {
+            throw new InvalidRequestException("ids must contain at least one field ID");
+        }
+        Set<String> unique = new LinkedHashSet<>();
+        for (String id : request.ids()) {
+            if (id == null || id.isBlank()) {
+                throw new InvalidRequestException("ids must not contain blank field IDs");
+            }
+            unique.add(id.strip());
+        }
+        if (unique.size() > MAX_FIELDS_PER_REQUEST) {
+            throw new InvalidRequestException("ids must contain at most " + MAX_FIELDS_PER_REQUEST + " field IDs");
+        }
+        return List.copyOf(unique);
     }
 }

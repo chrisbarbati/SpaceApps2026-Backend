@@ -2,6 +2,8 @@ package org.greenalienhouseparty.controller;
 
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
+import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.service.DataBackendService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,6 +88,37 @@ public class CropHistoryController {
             return service.cropHistory(request);
         } finally {
             log.trace("Exiting cropHistory()");
+        }
+    }
+
+    /**
+     * Retrieves crop history for several stored fields, such as the fields a
+     * user selected on the map, in one request.
+     *
+     * @param request the field IDs
+     * @return one result per unique requested field, in request order
+     */
+    @PostMapping("/fields/crop-history")
+    @Operation(summary = "Crop history of several fields",
+            description = "Returns crop history for up to 300 fields from /fields in one request, in the order given, "
+                    + "with duplicates answered once. Each result has status ok with the same history as "
+                    + "GET /fields/{field_id}/crop-history, or status error with a code (404 unknown field, "
+                    + "502 crop map provider failure) and detail. A failed field never fails the others, so check "
+                    + "failed. Fields not seen before take about 0.3 seconds each (about 30 seconds for 100); "
+                    + "cached fields return at once, so show progress for large selections. The newest crop map year is last season, not the current one.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "One result per requested field."),
+            @ApiResponse(responseCode = "422", description = "No IDs, a blank ID, or more than 300 IDs."),
+            @ApiResponse(responseCode = "502", description = "The data backend could not be reached."),
+            @ApiResponse(responseCode = "503", description = "Field boundary data is unavailable.")
+    })
+    public FieldCropHistoryBatchResponse fieldCropHistories(@RequestBody FieldCropHistoryBatchRequest request) {
+        log.trace("Entering fieldCropHistories()");
+        log.info("Handling POST /fields/crop-history");
+        try {
+            return service.fieldCropHistories(request);
+        } finally {
+            log.trace("Exiting fieldCropHistories()");
         }
     }
 }
