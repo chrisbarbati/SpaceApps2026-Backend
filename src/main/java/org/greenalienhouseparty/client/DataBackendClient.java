@@ -1,7 +1,12 @@
 package org.greenalienhouseparty.client;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.function.Supplier;
 
+import org.greenalienhouseparty.config.RequestIdFilter;
+import org.greenalienhouseparty.dto.CropHistoryRequest;
+import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
@@ -9,9 +14,12 @@ import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
+import org.greenalienhouseparty.dto.ReadinessResponse;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -47,10 +55,19 @@ public class DataBackendClient {
      * @param baseUrl     the Python backend base URL (see {@code data.backend.url})
      */
     public DataBackendClient(
-            ObjectMapper objectMapper,
+             ObjectMapper objectMapper,
             @Value("${data.backend.url:http://localhost:8000}") String baseUrl) {
         log.trace("Entering DataBackendClient constructor");
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        this.restClient = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestInterceptor((request, body, execution) -> {
+                    String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+                    if (requestId != null) {
+                        request.getHeaders().set(RequestIdFilter.REQUEST_ID_HEADER, requestId);
+                    }
+                    return execution.execute(request, body);
+                })
+                .build();
         this.objectMapper = objectMapper;
         log.debug("Initialized data backend HTTP client");
         log.trace("Exiting DataBackendClient constructor");
@@ -71,6 +88,42 @@ public class DataBackendClient {
                     .body(HealthResponse.class));
         } finally {
             log.trace("Exiting health()");
+        }
+    }
+
+    /**
+     * Calls the readiness endpoint while preserving its 200 or 503 status and
+     * typed readiness body.
+     *
+     * @return upstream readiness status and response body
+     */
+    public ResponseEntity<ReadinessResponse> readiness() {
+        log.trace("Entering readiness()");
+        log.debug("Calling Python data backend GET /ready");
+        try {
+            return execute(() -> restClient.get().uri("/ready").exchange((request, response) -> {
+                int status = response.getStatusCode().value();
+                String body;
+                try {
+                    body = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    log.error("Unable to read the Python readiness response body");
+                    throw new DataBackendException(HttpStatus.BAD_GATEWAY.value(), "Invalid readiness response");
+                }
+                if (status != HttpStatus.OK.value() && status != HttpStatus.SERVICE_UNAVAILABLE.value()) {
+                    throw new DataBackendException(status, parseDetail(body));
+                }
+                try {
+                    ReadinessResponse readiness = objectMapper.readValue(body, ReadinessResponse.class);
+                    return ResponseEntity.status(response.getStatusCode()).body(readiness);
+                } catch (Exception e) {
+                    log.error("Unable to deserialize the Python readiness response: {}",
+                            e.getClass().getSimpleName());
+                    throw new DataBackendException(HttpStatus.BAD_GATEWAY.value(), "Invalid readiness response");
+                }
+            }));
+        } finally {
+            log.trace("Exiting readiness()");
         }
     }
 
@@ -187,6 +240,46 @@ public class DataBackendClient {
                     .body(FieldSummaryResponse.class));
         } finally {
             log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
+     * Calls the field-specific crop history endpoint.
+     *
+     * @param fieldId the selected field identifier
+     * @return year-by-year crop classifications for the selected field
+     */
+    public CropHistoryResponse fieldCropHistory(String fieldId) {
+        log.trace("Entering fieldCropHistory()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/crop-history");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/crop-history").build(fieldId))
+                    .retrieve()
+                    .body(CropHistoryResponse.class));
+        } finally {
+            log.trace("Exiting fieldCropHistory()");
+        }
+    }
+
+    /**
+     * Calls the crop history endpoint for a user-provided field outline.
+     *
+     * @param request the polygon request
+     * @return year-by-year crop classifications for the outline
+     */
+    public CropHistoryResponse cropHistory(CropHistoryRequest request) {
+        log.trace("Entering cropHistory()");
+        log.debug("Calling Python data backend POST /crop-history");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/crop-history")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(CropHistoryResponse.class));
+        } finally {
+            log.trace("Exiting cropHistory()");
         }
     }
 

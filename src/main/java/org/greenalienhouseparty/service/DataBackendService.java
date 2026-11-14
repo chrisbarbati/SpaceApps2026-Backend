@@ -1,6 +1,8 @@
 package org.greenalienhouseparty.service;
 
 import org.greenalienhouseparty.client.DataBackendClient;
+import org.greenalienhouseparty.dto.CropHistoryRequest;
+import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
@@ -8,8 +10,10 @@ import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.HealthResponse;
+import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 /**
@@ -48,6 +52,21 @@ public class DataBackendService {
             return client.health();
         } finally {
             log.trace("Exiting health()");
+        }
+    }
+
+    /**
+     * Retrieves field-data readiness while preserving the upstream HTTP status.
+     *
+     * @return the upstream readiness status and typed response
+     */
+    public ResponseEntity<ReadinessResponse> readiness() {
+        log.trace("Entering readiness()");
+        log.debug("Requesting field-data readiness from the data backend");
+        try {
+            return client.readiness();
+        } finally {
+            log.trace("Exiting readiness()");
         }
     }
 
@@ -131,6 +150,38 @@ public class DataBackendService {
             return client.fieldSummary(request);
         } finally {
             log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
+     * Retrieves crop history for an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @return year-by-year crop classes and source metadata
+     */
+    public CropHistoryResponse fieldCropHistory(String fieldId) {
+        log.trace("Entering fieldCropHistory()");
+        log.debug("Requesting field crop history from the data backend");
+        try {
+            return client.fieldCropHistory(fieldId);
+        } finally {
+            log.trace("Exiting fieldCropHistory()");
+        }
+    }
+
+    /**
+     * Retrieves crop history for a user-provided outline.
+     *
+     * @param request the polygon request
+     * @return year-by-year crop classes and source metadata
+     */
+    public CropHistoryResponse cropHistory(CropHistoryRequest request) {
+        log.trace("Entering cropHistory()");
+        log.debug("Requesting crop history for a provided outline from the data backend");
+        try {
+            return client.cropHistory(request);
+        } finally {
+            log.trace("Exiting cropHistory()");
         }
     }
 }
