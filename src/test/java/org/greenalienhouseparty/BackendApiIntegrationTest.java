@@ -10,6 +10,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.Year;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -171,6 +174,70 @@ class BackendApiIntegrationTest {
         assertTrue(openApi.get("paths").has("/ready"));
         assertTrue(openApi.get("paths").has("/fields/{field_id}/crop-history"));
         assertTrue(openApi.get("paths").has("/crop-history"));
+        assertTrue(openApi.get("paths").has("/crops"));
+        assertTrue(openApi.get("paths").has("/crop-optimization"));
+    }
+
+    /**
+     * Verifies the fixed crop catalog and Java-owned five-year planning endpoint.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void exposesCropCatalogAndTemporaryFiveYearPlans() throws Exception {
+        HttpResponse<String> catalog = get("/crops");
+        assertEquals(200, catalog.statusCode());
+        assertEquals("Corn", json(catalog).get("crops").get(0).asString());
+        assertTrue(json(catalog).get("crops").size() >= 1);
+
+        LocalDate readyDate = LocalDate.now().plusYears(2);
+        String requestBody = """
+                {"fields":[
+                  {"fieldId":"field-1","geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},"currentCrop":"Corn","growableCrops":["Soybeans","Wheat"]},
+                  {"fieldId":"field-2","geometry":{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,2],[1,1]]]},"currentCrop":"Soybeans","growableCrops":["Oats"],"readyDate":"%s"}
+                ]}
+                """.formatted(readyDate);
+
+        HttpResponse<String> response = post("/crop-optimization", requestBody);
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals("random-placeholder", body.get("planner").asString());
+        assertTrue(body.get("temporary").asBoolean());
+        assertEquals(2, body.get("plans").size());
+
+        JsonNode firstPlan = body.get("plans").get(0);
+        assertEquals("field-1", firstPlan.get("fieldId").asString());
+        assertEquals(5, firstPlan.get("years").size());
+        assertTrue(firstPlan.get("years").get(0).get("year").asInt() >= Year.now().getValue() + 1);
+        for (JsonNode year : firstPlan.get("years")) {
+            assertTrue(List.of("Soybeans", "Wheat").contains(year.get("crop").asString()));
+        }
+
+        JsonNode secondPlan = body.get("plans").get(1);
+        assertEquals("field-2", secondPlan.get("fieldId").asString());
+        assertEquals(readyDate.getYear(), secondPlan.get("years").get(0).get("year").asInt());
+        for (JsonNode year : secondPlan.get("years")) {
+            assertEquals("Oats", year.get("crop").asString());
+        }
+        assertTrue(body.get("disclaimer").asString().contains("not optimized"));
+    }
+
+    /**
+     * Verifies invalid crop-planning choices return a validation response.
+     *
+     * @throws Exception if the response cannot be decoded
+     */
+    @Test
+    void rejectsUnsupportedCropChoices() throws Exception {
+        String requestBody = """
+                {"fields":[{"fieldId":"field-1","geometry":{"type":"Polygon","coordinates":[]},
+                "currentCrop":"Corn","growableCrops":["Coffee"]}]}
+                """;
+
+        HttpResponse<String> response = post("/crop-optimization", requestBody);
+
+        assertEquals(422, response.statusCode());
+        assertTrue(json(response).get("detail").asString().contains("unsupported crop"));
     }
 
     /**
