@@ -1,0 +1,199 @@
+package org.greenalienhouseparty.client;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import org.greenalienhouseparty.dto.FieldSummaryRequest;
+import org.greenalienhouseparty.dto.FieldSummaryResponse;
+import org.junit.jupiter.api.Test;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * Verifies typed deserialization and error mapping for every Python data API
+ * endpoint using a local HTTP test server.
+ */
+class DataBackendClientIntegrationTest {
+
+    private static final String POLYGON = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /**
+     * Exercises every upstream endpoint and verifies that JSON becomes typed
+     * Java models rather than remaining an opaque response body.
+     *
+     * @throws Exception if the local HTTP server or client fails
+     */
+    @Test
+    void deserializesAllDataEndpoints() throws Exception {
+        AtomicReference<String> sentSummaryRequest = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String response;
+            if (path.equals("/health")) {
+                response = "{\"status\":\"ok\"}";
+            } else if (path.equals("/daily-point")) {
+                response = "{\"type\":\"Feature\",\"geometry\":null,"
+                        + "\"properties\":{\"parameter\":{\"T2M\":{\"20240101\":12.5}}},"
+                        + "\"header\":{\"title\":\"NASA POWER\"}}";
+            } else if (path.equals("/fields")) {
+                response = "{\"type\":\"FeatureCollection\",\"features\":["
+                        + "{\"type\":\"Feature\",\"id\":\"field-1\","
+                        + "\"properties\":{\"id\":\"field-1\",\"score\":88},"
+                        + "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[]},"
+                        + "\"bbox\":[0,0,1,1]}],\"numberReturned\":1,"
+                        + "\"hasMore\":true,\"nextCursor\":42,\"queryBbox\":[0,0,1,1]}";
+            } else if (path.equals("/fields/field-1")) {
+                response = "{\"id\":\"field-1\",\"hectares\":12.3,\"acres\":30.4}";
+            } else if (path.equals("/field-coverage")) {
+                response = "{\"region\":\"Ontario\",\"status\":\"complete\","
+                        + "\"fields\":123,\"sourceUrl\":\"https://example.test/source\","
+                        + "\"completedPartitions\":7}";
+            } else if (path.equals("/field-summary")) {
+                try {
+                    sentSummaryRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                response = summaryResponse();
+            } else {
+                response = "{}";
+            }
+            respond(exchange, 200, response);
+        });
+        server.start();
+
+        try {
+            DataBackendClient client = client(server);
+            assertEquals("ok", client.health().status());
+
+            var daily = client.dailyPoint(44.6, -79.4, "20240101", "20240107", "T2M");
+            assertEquals(12.5, daily.getProperties().getParameter().get("T2M").get("20240101").asDouble());
+            assertEquals("NASA POWER", daily.getExtra().get("header").get("title").asString());
+
+            var fields = client.listFields("0,0,1,1", 20, 0);
+            assertEquals(1, fields.numberReturned());
+            assertTrue(fields.hasMore());
+            assertEquals(42, fields.nextCursor());
+            assertEquals(88, fields.features().getFirst().properties().getScore());
+            assertEquals("Polygon", fields.features().getFirst().geometry().get("type").asString());
+
+            assertEquals(12.3, client.fieldArea("field-1").hectares());
+
+            var coverage = client.fieldCoverage();
+            assertEquals("Ontario", coverage.getRegion());
+            assertEquals("https://example.test/source", coverage.getSourceUrl());
+            assertEquals(7, coverage.getExtra().get("completedPartitions").asInt());
+
+            FieldSummaryRequest request = new FieldSummaryRequest();
+            request.setPolygon(JSON.readTree(POLYGON));
+            request.setPeriod(new FieldSummaryRequest.PeriodRequest("2023-01-01", "2023-12-31"));
+            request.setSeason(new FieldSummaryRequest.SeasonRequest(List.of(5, 6, 7, 8, 9)));
+            request.setWeatherGridDeg(0.05);
+            FieldSummaryResponse summary = client.fieldSummary(request);
+            assertEquals(4321.5, summary.climate().gddAnnualMedian());
+            assertEquals(125.0, summary.water().seasonEt0MmMedian());
+            assertEquals("ok", summary.layers().weather().status());
+            assertNull(summary.terrain());
+            assertEquals("NASA POWER", summary.source().getFirst().getSource());
+            assertEquals(50, summary.source().getFirst().getExtra().get("spatial_resolution_km").asInt());
+
+            JsonNode sent = JSON.readTree(sentSummaryRequest.get());
+            assertEquals("Polygon", sent.get("polygon").get("type").asString());
+            assertEquals("2023-01-01", sent.get("period").get("start").asString());
+            assertEquals(0.05, sent.get("weatherGridDeg").asDouble());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * Confirms upstream error status and structured detail are preserved.
+     *
+     * @throws Exception if the local HTTP server cannot be started
+     */
+    @Test
+    void preservesUpstreamStatusAndDetail() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> respond(exchange, 404, "{\"detail\":\"Field not found\"}"));
+        server.start();
+        try {
+            DataBackendException exception = assertThrows(
+                    DataBackendException.class, () -> client(server).fieldArea("missing"));
+            assertEquals(404, exception.getStatusCode());
+            assertNotNull(exception.getDetail());
+            assertEquals("\"Field not found\"", exception.getDetail().toString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * Creates a client pointed at the given local HTTP server.
+     *
+     * @param server the local upstream server
+     * @return a client configured for that server
+     */
+    private DataBackendClient client(HttpServer server) {
+        return new DataBackendClient(JSON, "http://127.0.0.1:" + server.getAddress().getPort());
+    }
+
+    /**
+     * Returns a representative field summary with all response blocks.
+     *
+     * @return JSON for a Python field summary response
+     */
+    private static String summaryResponse() {
+        return "{\"field\":{\"centroid\":{\"lat\":44.6,\"lon\":-79.4},\"areaHa\":1.2},"
+                + "\"weatherCell\":{\"lat\":44.6,\"lon\":-79.4,\"gridDeg\":0.05},"
+                + "\"period\":{\"start\":\"20230101\",\"end\":\"20231231\"},"
+                + "\"season\":{\"months\":[5,6,7,8,9],\"crosses_year\":false,"
+                + "\"base_temp_c\":10,\"label\":\"May-Sep\"},"
+                + "\"climate\":{\"gdd_annual_median\":4321.5,\"precip_trend_mm_per_year\":2.1},"
+                + "\"water\":{\"season_et0_mm_median\":125.0},"
+                + "\"frost\":{\"last_spring_frost\":\"04-20\",\"first_fall_frost\":\"10-10\","
+                + "\"last_spring_frost_doy\":110,\"first_fall_frost_doy\":283,"
+                + "\"frost_free_season_days\":173,\"spring_frost_years\":5,"
+                + "\"last_spring_frost_doy_by_year\":{\"2023\":110},\"calendar_shift_days\":0},"
+                + "\"monthly\":[{\"month\":1,\"precip_mm\":20,\"heavy_rain_days\":1,"
+                + "\"et0_mm\":12,\"frost_days\":4,\"tmean_c\":-3.1}],"
+                + "\"coverage\":{\"first_date\":\"2023-01-01\",\"last_date\":\"2023-12-31\","
+                + "\"calendar_years\":1,\"years_with_temperature\":1,\"years_with_water_balance\":1,"
+                + "\"min_coverage\":0.9,\"missing_temperature_days\":0,\"missing_precip_days\":0,"
+                + "\"duplicate_days_dropped\":0,\"impossible_temperature_days\":0,\"impossible_precip_days\":0},"
+                + "\"terrain\":null,\"layers\":{\"weather\":{\"status\":\"ok\"},"
+                + "\"terrain\":{\"status\":\"error\",\"message\":\"unavailable\"}},"
+                + "\"source\":[{\"source\":\"NASA POWER\",\"spatial_resolution_km\":50}]}";
+    }
+
+    /**
+     * Writes a JSON response from the local HTTP server.
+     *
+     * @param exchange the active test request
+     * @param status   the HTTP response status
+     * @param body     the JSON body
+     * @throws IOException if the response cannot be written
+     */
+    private static void respond(HttpExchange exchange, int status, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (var response = exchange.getResponseBody()) {
+            response.write(bytes);
+        }
+    }
+}
