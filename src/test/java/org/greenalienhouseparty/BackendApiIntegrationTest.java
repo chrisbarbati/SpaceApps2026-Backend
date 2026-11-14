@@ -54,6 +54,8 @@ class BackendApiIntegrationTest {
 
     private static final AtomicReference<String> greennessQuery = new AtomicReference<>();
 
+    private static final List<String> soilBatchBodies = new CopyOnWriteArrayList<>();
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
@@ -79,6 +81,7 @@ class BackendApiIntegrationTest {
         batchRequestBodies.clear();
         fieldDatabaseUp.set(true);
         greennessQuery.set(null);
+        soilBatchBodies.clear();
     }
 
     /**
@@ -422,6 +425,42 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies single-field and multi-field soil pass through unchanged, including
+     * per-field errors, and that invalid selections stop before the data backend.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsFieldSoil() throws Exception {
+        HttpResponse<String> single = get("/fields/field-1/soil");
+        assertEquals(200, single.statusCode());
+        JsonNode soil = json(single);
+        assertEquals("field-1", soil.get("id").asString());
+        assertEquals(6.82, soil.get("topsoil").get("ph").asDouble());
+        assertEquals("Sandy loam", soil.get("derived").get("textureClass").asString());
+        assertEquals(40, soil.get("derived").get("availableWaterMm").asInt());
+        assertEquals(16.45, soil.get("depths").get("15-30cm").get("clayPct").asDouble());
+        assertEquals("mm in 0-30 cm", soil.get("units").get("availableWaterMm").asString());
+        assertEquals(404, get("/fields/missing/soil").statusCode());
+
+        HttpResponse<String> batch = post("/fields/soil", "{\"ids\":[\"field-1\",\"missing\",\"field-1\"]}");
+        assertEquals(200, batch.statusCode());
+        JsonNode body = json(batch);
+        assertEquals(1, body.get("failed").asInt());
+        assertEquals("Sandy loam", body.get("results").get(0).get("soil").get("derived").get("textureClass").asString());
+        assertEquals(52.31, body.get("results").get(0).get("soil").get("topsoil").get("sandPct").asDouble());
+        assertTrue(!body.get("results").get(0).has("ok"));
+        assertEquals(404, body.get("results").get(1).get("error").get("code").asInt());
+        assertEquals("[\"field-1\",\"missing\"]", JSON.readTree(soilBatchBodies.get(0)).get("ids").toString());
+
+        assertEquals(422, post("/fields/soil", "{\"ids\":[]}").statusCode());
+        assertEquals(1, soilBatchBodies.size());
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/soil"));
+        assertTrue(paths.has("/fields/soil"));
+    }
+
+    /**
      * Verifies field greenness passes the optional year through and returns the
      * season unchanged, and that errors keep their status.
      *
@@ -529,6 +568,14 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/provider-error/crop-history")) {
             status = 502;
             response = "{\"detail\":\"AAFC Annual Crop Inventory is unavailable\"}";
+        } else if (path.equals("/fields/field-1/soil")) {
+            response = "{\"id\":\"field-1\"," + soilJson() + "}";
+        } else if (path.equals("/fields/soil")) {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            soilBatchBodies.add(body);
+            response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
+                    + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
+                    + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
         } else if (path.equals("/fields/field-1/greenness")) {
             greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\",\"year\":2024,"
@@ -602,6 +649,23 @@ class BackendApiIntegrationTest {
             response = "{\"detail\":\"Not found\"}";
         }
         respond(exchange, status, response);
+    }
+
+    /**
+     * Creates representative soil properties, without the surrounding braces.
+     *
+     * @return soil JSON members
+     */
+    private static String soilJson() {
+        String props = "{\"ph\":6.82,\"clayPct\":16.45,\"sandPct\":52.31,\"siltPct\":31.24,"
+                + "\"organicCarbonGPerKg\":28.7,\"nitrogenGPerKg\":2.76,\"bulkDensityGPerCm3\":1.48,\"cecCmolPerKg\":17.05}";
+        return "\"topsoil\":" + props + ","
+                + "\"derived\":{\"textureClass\":\"Sandy loam\",\"organicMatterPct\":4.9,\"phClass\":\"Neutral\","
+                + "\"availableWaterMm\":40},"
+                + "\"depths\":{\"0-5cm\":" + props + ",\"5-15cm\":" + props + ",\"15-30cm\":" + props + "},"
+                + "\"units\":{\"ph\":\"pH\",\"availableWaterMm\":\"mm in 0-30 cm\"},"
+                + "\"source\":{\"name\":\"ISRIC SoilGrids 2.0\",\"url\":\"https://soilgrids.org\","
+                + "\"resolutionM\":250,\"license\":\"CC BY 4.0\"},\"note\":\"Estimates, not a soil test\"";
     }
 
     /**

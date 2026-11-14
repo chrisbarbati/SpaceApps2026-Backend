@@ -16,6 +16,8 @@ import org.greenalienhouseparty.dto.DailyPointResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldGreennessResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
+import org.greenalienhouseparty.dto.FieldSoilResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
@@ -366,6 +368,46 @@ public class DataBackendClient {
                     .body(FieldGreennessResponse.class));
         } finally {
             log.trace("Exiting fieldGreenness()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field soil endpoint.
+     *
+     * @param fieldId the field identifier
+     * @return topsoil estimates for the field
+     */
+    public FieldSoilResponse fieldSoil(String fieldId) {
+        log.trace("Entering fieldSoil()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/soil");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/soil").build(fieldId))
+                    .retrieve()
+                    .body(FieldSoilResponse.class));
+        } finally {
+            log.trace("Exiting fieldSoil()");
+        }
+    }
+
+    /**
+     * Calls the data backend's multi-field soil endpoint for at most 100 field IDs.
+     *
+     * @param ids the field identifiers, at most 100
+     * @return one result per unique requested field, in request order
+     */
+    public FieldSoilBatchResponse fieldSoils(List<String> ids) {
+        log.trace("Entering fieldSoils()");
+        log.debug("Calling Python data backend POST /fields/soil for {} fields", ids.size());
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/fields/soil")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("ids", ids))
+                    .retrieve()
+                    .body(FieldSoilBatchResponse.class));
+        } finally {
+            log.trace("Exiting fieldSoils()");
         }
     }
 

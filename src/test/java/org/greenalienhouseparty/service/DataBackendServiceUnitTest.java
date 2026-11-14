@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import org.greenalienhouseparty.client.DataBackendClient;
 import org.mockito.ArgumentCaptor;
@@ -19,6 +20,9 @@ import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
 import org.greenalienhouseparty.dto.FieldGreennessResponse;
+import org.greenalienhouseparty.dto.FieldSoilResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchRequest;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -248,6 +252,57 @@ class DataBackendServiceUnitTest {
 
         assertSame(expected, service.fieldGreenness("field-1", 2024));
         verify(client).fieldGreenness("field-1", 2024);
+    }
+
+    /**
+     * Verifies that single-field soil delegates to the client.
+     */
+    @Test
+    void delegatesFieldSoil() {
+        FieldSoilResponse expected = new FieldSoilResponse("field-1", null, null, Map.of(), Map.of(), null, null);
+        when(client.fieldSoil("field-1")).thenReturn(expected);
+
+        assertSame(expected, service.fieldSoil("field-1"));
+        verify(client).fieldSoil("field-1");
+    }
+
+    /**
+     * Verifies that soil for a large selection is de-duplicated, sent in ordered
+     * groups of 100 and combined with recomputed counts, and that invalid
+     * selections never reach the data backend.
+     */
+    @Test
+    void splitsFieldSoilsIntoGroupsOf100() {
+        List<String> ids = new ArrayList<>();
+        for (int n = 0; n < 150; n++) {
+            ids.add("field-" + n);
+        }
+        ids.add("field-3");
+        when(client.fieldSoils(anyList())).thenAnswer(call -> {
+            List<String> group = call.getArgument(0);
+            List<FieldSoilBatchResponse.Result> results = group.stream()
+                    .map(id -> id.equals("field-149")
+                            ? new FieldSoilBatchResponse.Result(id, FieldSoilBatchResponse.ERROR, null,
+                                    new FieldCropHistoryBatchResponse.Error(502, "SoilGrids is unavailable"))
+                            : new FieldSoilBatchResponse.Result(id, FieldSoilBatchResponse.OK,
+                                    new FieldSoilResponse(null, null, null, Map.of(), Map.of(), null, null), null))
+                    .toList();
+            return new FieldSoilBatchResponse(results, results.size(), 0, 0);
+        });
+
+        FieldSoilBatchResponse response = service.fieldSoils(new FieldSoilBatchRequest(ids));
+
+        ArgumentCaptor<List<String>> groups = ArgumentCaptor.captor();
+        verify(client, times(2)).fieldSoils(groups.capture());
+        assertEquals(List.of(100, 50), groups.getAllValues().stream().map(List::size).toList());
+        assertEquals(150, response.requested());
+        assertEquals(149, response.succeeded());
+        assertEquals(1, response.failed());
+        assertEquals("field-149", response.results().get(149).id());
+
+        assertThrows(InvalidRequestException.class, () -> service.fieldSoils(new FieldSoilBatchRequest(List.of())));
+        assertThrows(InvalidRequestException.class, () -> service.fieldSoils(new FieldSoilBatchRequest(List.of(" "))));
+        verify(client, times(2)).fieldSoils(anyList());
     }
 
     /**
