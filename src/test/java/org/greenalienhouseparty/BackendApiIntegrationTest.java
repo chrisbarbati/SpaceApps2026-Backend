@@ -147,6 +147,20 @@ class BackendApiIntegrationTest {
         assertEquals(200, fields.statusCode());
         assertEquals("FeatureCollection", json(fields).get("type").asString());
         assertEquals("field-1", json(fields).get("features").get(0).get("id").asString());
+        JsonNode properties = json(fields).get("features").get(0).get("properties");
+        assertEquals(42.72, properties.get("areaHa").asDouble());
+        assertEquals(105.56, properties.get("areaAcres").asDouble());
+        assertEquals(4109, properties.get("perimeterM").asInt());
+        assertEquals(1205, properties.get("lengthM").asInt());
+        assertEquals(416, properties.get("widthM").asInt());
+        assertEquals(162, properties.get("orientationDeg").asInt());
+        assertEquals(0.32, properties.get("compactness").asDouble());
+        assertEquals(0, properties.get("holes").asInt());
+        assertEquals(1, properties.get("parts").asInt());
+        assertEquals(-79.156222, properties.get("centroid").get(0).asDouble());
+        assertEquals(2025, properties.get("sourceYear").asInt());
+        assertEquals(88, properties.get("score").asInt());
+        assertEquals(13, properties.size());
         assertTrue(receivedFieldsQuery.get().contains("limit=50"));
         assertTrue(receivedFieldsQuery.get().contains("cursor=0"));
 
@@ -465,7 +479,10 @@ class BackendApiIntegrationTest {
             receivedFieldsQuery.set(exchange.getRequestURI().getRawQuery());
             response = "{\"type\":\"FeatureCollection\",\"features\":["
                     + "{\"type\":\"Feature\",\"id\":\"field-1\","
-                    + "\"properties\":{\"id\":\"field-1\",\"score\":88},"
+                    + "\"properties\":{\"areaHa\":42.72,\"areaAcres\":105.56,\"perimeterM\":4109,"
+                    + "\"lengthM\":1205,\"widthM\":416,\"orientationDeg\":162,\"compactness\":0.32,"
+                    + "\"holes\":0,\"parts\":1,\"centroid\":[-79.156222,44.345239],\"sourceYear\":2025,"
+                    + "\"id\":\"field-1\",\"score\":88},"
                     + "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[]},"
                     + "\"bbox\":[0,0,1,1]}],\"numberReturned\":1,"
                     + "\"hasMore\":false,\"nextCursor\":null}";
