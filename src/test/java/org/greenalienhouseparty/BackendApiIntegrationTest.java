@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -62,6 +63,10 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> imageryQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> imageryRequestBody = new AtomicReference<>();
+
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
 
     private static HttpServer dataBackend;
@@ -88,6 +93,8 @@ class BackendApiIntegrationTest {
         soilBatchBodies.clear();
         soilRequestBody.set(null);
         greennessRequestBody.set(null);
+        imageryQuery.set(null);
+        imageryRequestBody.set(null);
     }
 
     /**
@@ -105,6 +112,14 @@ class BackendApiIntegrationTest {
             throw new IllegalStateException("Unable to start the local data backend stub", e);
         }
         registry.add("data.backend.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort());
+        registry.add("imagery.render.allowed-prefix", BackendApiIntegrationTest::renderPrefix);
+    }
+
+    /**
+     * @return the image-rendering address prefix served by the local stub
+     */
+    private static String renderPrefix() {
+        return "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/api/data/v1/item/bbox/";
     }
 
     /**
@@ -573,6 +588,70 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies field and outline imagery are re-exposed with image URLs on this
+     * API, that those URLs return the provider's PNG, and that errors and
+     * disallowed image addresses are reported.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void exposesImageryAndServesImages() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/imagery?dataset=sentinel-2&start=2025-06-01&maxCloud=20");
+        assertEquals(200, field.statusCode());
+        assertEquals("dataset=sentinel-2&start=2025-06-01&maxCloud=20.0", imageryQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals("2025-06-01", body.get("period").get("start").asString());
+        assertEquals(30, body.get("source").get("resolutionM").asInt());
+        JsonNode scene = body.get("images").get(0);
+        assertEquals("hls2-s30", scene.get("collection").asString());
+        assertEquals(12.0, scene.get("sceneCloudCoverPct").asDouble());
+        assertEquals(renderPrefix() + "ok.png?collection=hls2-s30&item=X", scene.get("sourceImageUrl").asString());
+        String imageUrl = scene.get("imageUrl").asString();
+        assertTrue(imageUrl.startsWith("/imagery/image?src="));
+        assertTrue(body.get("images").get(1).get("imageUrl").isNull());
+
+        HttpResponse<byte[]> image = httpClient.send(HttpRequest.newBuilder(URI.create(url(imageUrl))).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, image.statusCode());
+        assertEquals("image/png", image.headers().firstValue("Content-Type").orElseThrow());
+        assertTrue(image.headers().firstValue("Cache-Control").orElseThrow().contains("max-age=86400"));
+        assertEquals("nosniff", image.headers().firstValue("X-Content-Type-Options").orElseThrow());
+        assertEquals("PNG", new String(image.body(), 1, 3, StandardCharsets.US_ASCII));
+
+        get("/fields/field-1/imagery");
+        assertEquals("null", imageryQuery.get());
+        assertEquals(422, get("/fields/field-1/imagery?start=yesterday").statusCode());
+        assertEquals(404, get("/fields/missing/imagery").statusCode());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> outlineImagery = post("/imagery", "{\"polygon\":" + outline + ",\"limit\":2}");
+        assertEquals(200, outlineImagery.statusCode());
+        assertTrue(!json(outlineImagery).has("id"));
+        assertTrue(json(outlineImagery).get("images").get(0).get("imageUrl").asString().startsWith("/imagery/image?src="));
+        assertEquals(2, JSON.readTree(imageryRequestBody.get()).get("limit").asInt());
+        assertTrue(!JSON.readTree(imageryRequestBody.get()).has("dataset"));
+        HttpResponse<String> invalid = post("/imagery", "{\"polygon\":" + outline + ",\"extra\":true}");
+        assertEquals(422, invalid.statusCode());
+        assertEquals("Extra inputs are not permitted", json(invalid).get("detail").asString());
+
+        HttpResponse<String> offsite = get("/imagery/image?src="
+                + URLEncoder.encode("https://evil.example/api/data/v1/item/bbox/a.png", StandardCharsets.UTF_8));
+        assertEquals(422, offsite.statusCode());
+        assertTrue(json(offsite).has("detail"));
+        assertEquals(422, get("/imagery/image").statusCode());
+        HttpResponse<String> failed = get("/imagery/image?src="
+                + URLEncoder.encode(renderPrefix() + "fail.png", StandardCharsets.UTF_8));
+        assertEquals(502, failed.statusCode());
+        assertTrue(json(failed).get("detail").asString().contains("HTTP 500"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/imagery"));
+        assertTrue(paths.has("/imagery"));
+        assertTrue(paths.has("/imagery/image"));
+    }
+
+    /**
      * Verifies that upstream HTTP failures retain their status and detail in
      * the public Java API response.
      *
@@ -674,6 +753,28 @@ class BackendApiIntegrationTest {
             } else {
                 response = "{" + soilJson() + "}";
             }
+        } else if (path.equals("/fields/field-1/imagery")) {
+            imageryQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + imageryJson() + "}";
+        } else if (path.equals("/imagery")) {
+            imageryRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (imageryRequestBody.get().contains("\"extra\"")) {
+                status = 422;
+                response = "{\"detail\":\"Extra inputs are not permitted\"}";
+            } else {
+                response = "{" + imageryJson() + "}";
+            }
+        } else if (path.equals("/api/data/v1/item/bbox/ok.png")) {
+            byte[] png = {(byte) 0x89, 'P', 'N', 'G', 1, 2, 3};
+            exchange.getResponseHeaders().set("Content-Type", "image/png");
+            exchange.sendResponseHeaders(200, png.length);
+            try (var out = exchange.getResponseBody()) {
+                out.write(png);
+            }
+            return;
+        } else if (path.equals("/api/data/v1/item/bbox/fail.png")) {
+            status = 500;
+            response = "{\"detail\":\"render failed\"}";
         } else if (path.equals("/fields/provider-error/greenness")) {
             status = 502;
             response = "{\"detail\":\"Earth Search (Sentinel-2 catalogue) is unavailable\"}";
@@ -772,6 +873,30 @@ class BackendApiIntegrationTest {
                 + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\","
                 + "\"resolutionM\":10,\"license\":\"Copernicus Sentinel data, free and open\"},"
                 + "\"note\":\"Mean NDVI over the clear part of the field\"";
+    }
+
+    /**
+     * Creates a representative imagery result, without the surrounding braces.
+     * The first scene renders on the local stub; the second points at a host
+     * that is not allowed.
+     *
+     * @return imagery JSON members
+     */
+    private static String imageryJson() {
+        return "\"period\":{\"start\":\"2025-06-01\",\"end\":\"2025-09-01\"},"
+                + "\"bbox\":[-88.95,40.45,-88.947,40.453],\"images\":["
+                + "{\"sceneId\":\"X\",\"datetime\":\"2025-07-19T16:49:05.024Z\",\"collection\":\"hls2-s30\","
+                + "\"platform\":\"sentinel-2b\",\"sceneCloudCoverPct\":12,"
+                + "\"imageUrl\":\"" + renderPrefix() + "ok.png?collection=hls2-s30&item=X\","
+                + "\"sceneBbox\":[-89.1,40.0,-87.8,41.0],\"sceneUrl\":\"https://example.test/stac/X\"},"
+                + "{\"sceneId\":\"Y\",\"datetime\":\"2025-07-01T16:49:05Z\",\"collection\":\"hls2-l30\","
+                + "\"platform\":\"landsat-9\",\"sceneCloudCoverPct\":3,"
+                + "\"imageUrl\":\"https://evil.example/y.png\","
+                + "\"sceneBbox\":[-89.1,40.0,-87.8,41.0],\"sceneUrl\":\"https://example.test/stac/Y\"}],"
+                + "\"hasMore\":false,\"dataset\":\"hls\","
+                + "\"source\":{\"name\":\"NASA Harmonized Landsat Sentinel-2 v2.0\","
+                + "\"provider\":\"Microsoft Planetary Computer\",\"collections\":[\"hls2-l30\",\"hls2-s30\"],"
+                + "\"resolutionM\":30,\"url\":\"https://hls.gsfc.nasa.gov/\"},\"note\":\"Newest first\"";
     }
 
     /**
