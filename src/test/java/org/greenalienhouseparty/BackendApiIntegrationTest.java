@@ -346,14 +346,19 @@ class BackendApiIntegrationTest {
     void exposesCropCatalogAndTemporaryFiveYearPlans() throws Exception {
         HttpResponse<String> catalog = get("/crops");
         assertEquals(200, catalog.statusCode());
-        assertEquals("Corn", json(catalog).get("crops").get(0).asString());
+        JsonNode corn = json(catalog).get("crops").get(0);
+        assertEquals("corn", corn.get("id").asString());
+        assertEquals("Corn", corn.get("name").asString());
+        assertEquals("Poaceae", corn.get("family").asString());
+        assertTrue(corn.has("nDemandKgHa") && corn.has("netMarginPerHa") && corn.has("diseaseSusceptibility"));
+        assertTrue(json(catalog).get("exampleData").asBoolean());
         assertTrue(json(catalog).get("crops").size() >= 1);
 
         LocalDate readyDate = LocalDate.now().plusYears(2);
         String requestBody = """
                 {"fields":[
                   {"fieldId":"field-1","geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},"currentCrop":"Corn","growableCrops":["Soybeans","Wheat"]},
-                  {"fieldId":"field-2","geometry":{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,2],[1,1]]]},"currentCrop":"Soybeans","growableCrops":["Oats"],"readyDate":"%s"}
+                  {"fieldId":"field-2","geometry":{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,2],[1,1]]]},"currentCrop":"soybeans","growableCrops":["oats"],"readyDate":"%s"}
                 ]}
                 """.formatted(readyDate);
 

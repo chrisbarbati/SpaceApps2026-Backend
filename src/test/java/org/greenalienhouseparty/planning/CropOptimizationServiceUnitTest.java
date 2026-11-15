@@ -1,4 +1,4 @@
-package org.greenalienhouseparty.service;
+package org.greenalienhouseparty.planning;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -32,27 +32,53 @@ class CropOptimizationServiceUnitTest {
     @Mock
     private CropRotationPlanner planner;
 
-    private CropCatalog catalog;
+    private CropRepository crops;
 
     private CropOptimizationService service;
 
     /**
-     * Creates the service with the fixed catalog and a mocked planner.
+     * Creates the service with the example crop catalog and a mocked planner.
      */
     @BeforeEach
     void setUp() {
-        catalog = new CropCatalog();
-        service = new CropOptimizationService(catalog, planner);
+        crops = new ExampleCropRepository();
+        service = new CropOptimizationService(crops, planner);
     }
 
     /**
-     * Verifies the current fixed catalog includes the established frontend crop
-     * choices.
+     * Verifies the catalog returns the established crop choices as rich crop
+     * entities and flags the figures as example data.
      */
     @Test
-    void returnsFixedCropCatalog() {
+    void returnsCropCatalogWithAttributes() {
+        var catalog = service.catalog();
+
         assertEquals(List.of("Corn", "Soybeans", "Wheat", "Barley", "Oats", "Canola", "Potatoes", "Alfalfa", "Grapes"),
-                service.catalog().crops());
+                catalog.crops().stream().map(crop -> crop.name()).toList());
+        assertEquals("corn", catalog.crops().getFirst().id());
+        assertEquals("Poaceae", catalog.crops().getFirst().family());
+        assertEquals(true, catalog.exampleData());
+        assertEquals(true, catalog.note().contains("examples"));
+    }
+
+    /**
+     * Verifies crops submitted by id reach the planner as display names, and
+     * that an id and a name for the same crop count as a duplicate.
+     *
+     * @throws Exception if the geometry fixture cannot be parsed
+     */
+    @Test
+    void acceptsCropIdsAndPassesDisplayNamesToThePlanner() throws Exception {
+        var submitted = new CropOptimizationRequest.FieldRequest(
+                "field-1", field("field-1", List.of()).geometry(), "corn", List.of("soybeans", " Wheat "), null);
+        var expected = new CropOptimizationRequest.FieldRequest(
+                "field-1", submitted.geometry(), "Corn", List.of("Soybeans", "Wheat"), null);
+
+        service.optimize(new CropOptimizationRequest(List.of(submitted)));
+
+        verify(planner).plan(expected);
+        var duplicate = new CropOptimizationRequest(List.of(field("field-1", List.of("soybeans", "Soybeans"))));
+        assertThrows(CropOptimizationValidationException.class, () -> service.optimize(duplicate));
     }
 
     /**
@@ -69,6 +95,8 @@ class CropOptimizationServiceUnitTest {
         var secondPlan = new CropOptimizationResponse.FieldPlan("field-2", "Soybeans", List.of());
         when(planner.plan(first)).thenReturn(firstPlan);
         when(planner.plan(second)).thenReturn(secondPlan);
+        when(planner.id()).thenReturn("random-placeholder");
+        when(planner.temporary()).thenReturn(true);
 
         CropOptimizationResponse response = service.optimize(new CropOptimizationRequest(List.of(first, second)));
 

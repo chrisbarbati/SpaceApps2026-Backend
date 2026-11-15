@@ -17,8 +17,9 @@ public record CropOptimizationRequest(List<FieldRequest> fields) {
      *
      * @param fieldId       stable field identifier from the field API
      * @param geometry      selected GeoJSON field geometry for future planning logic
-     * @param currentCrop   crop currently growing in the field
-     * @param growableCrops crops the farmer says they can grow
+     * @param currentCrop   id of the crop currently growing in the field, from {@code GET /crops};
+     *                      the display name is also accepted
+     * @param growableCrops ids (or display names) of the crops the farmer says they can grow
      * @param readyDate     date the field is expected to be ready for planting, if known
      */
     public record FieldRequest(

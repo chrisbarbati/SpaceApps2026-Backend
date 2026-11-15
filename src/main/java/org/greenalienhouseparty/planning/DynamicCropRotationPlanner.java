@@ -1,65 +1,39 @@
-package org.greenalienhouseparty.service;
+package org.greenalienhouseparty.planning;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+
+import org.greenalienhouseparty.exception.CropOptimizationValidationException;
+import org.greenalienhouseparty.planning.model.Crop;
+import org.greenalienhouseparty.planning.model.Field;
+import org.greenalienhouseparty.planning.model.FieldPlan;
+import org.greenalienhouseparty.planning.model.Weights;
+import org.greenalienhouseparty.planning.model.YearPlan;
 
 /**
- * TODO: Document further
+ * First implementation of optimized crop rotation functionality.
  *
- * First implementation of optimized crop rotation functionality
+ * <p>For one field, finds the sequence of crops over the planning horizon with
+ * the best total score, by dynamic programming over the state "crop grown last
+ * year, crop grown two years ago". Each year's score blends a soil score
+ * (disease pressure from repeating a crop family, nitrogen balance, residue
+ * and erosion cover) with income, using the caller's {@link Weights}.</p>
+ *
+ * <p>The planner knows the whole crop catalog so that it can recognise crops in
+ * a field's history, but only plants crops the farmer says they can grow.</p>
+ *
+ * TODO: Document further
  */
 public class DynamicCropRotationPlanner {
 
-    // TODO: Extract the following records, and then generate them based on transformation of the NASA data to this format
-
     // TODO: Review whether the scoring values below make sense, or if there's possibly some way to get them empirically rather than our assumed values
 
-    public record Crop(
-            String id,
-            String name,
-            String family, // Basic identification
-            double nFixKgHa,
-            double nDemandKgHa,
-            double residueScore,      // 0..1 carbon input
-            int coverMonths,          // 0..12
-            double phMin, double phMax,
-            double netMarginPerHa,    // $/ha, can be negative for cover crops
-            double diseaseSusceptibility // 0..1
-    ) {}
-
-    // TODO: Extract
-    public record Field(
-            String id, double lat, double lon, double areaHa,
-            double ph, String texture, double organicMatterPct,
-            double erosionRisk,       // 0..1
-            List<String> history      // crop ids, most recent first
-    ) {}
-
-    // TODO: Extract
-    public record Weights(double soil, double income) {} // sum to 1
-
-    // TODO: Extract
-    public record YearPlan(
-            int year, String cropId, String cropName,
-            double soilScore, double incomePerHa, String rationale) {}
-
-    // TODO: Extract
-    public record FieldPlan(
-            String fieldId, List<YearPlan> years,
-            double totalSoilScore, double totalIncome) {}
-
-    // TODO: Extract
-    public record Strategy(
-            String name, Weights weights, List<FieldPlan> fieldPlans,
-            double farmSoilIndex, double farmIncome) {}
-
-    // TODO: Extract
-    public record PlanResponse(
-            List<Strategy> strategies, String recommended, Strategy baseline) {}
-
     /**
-     * List of all potential crops that the farmer is able to plant
+     * Every crop the planner knows about. A field's history is read against this list; which of
+     * these may actually be planted is decided per field in {@link #planField(Field, Set, Weights)}.
      */
     private final List<Crop> availableCrops;
 
@@ -69,31 +43,21 @@ public class DynamicCropRotationPlanner {
     private final int planningYears;
 
     /**
-     * Highest margin that can potentially be earned per hectare of land.
-     * <p>
-     * Will be used to scale the profit scoring later. This maximum margin
-     * will be used as 1.0, and the plans can then be scored against it on a
-     * 0 to 1.0 scale.
-     * </p>
-     */
-    private final double highestMarginPerHa;
-
-    /**
      * Placeholder index meaning "no crop was grown", to be used for missing
      * historical data.
      */
     private final int noCropIndex;
 
+    /**
+     * Creates a planner.
+     *
+     * @param availableCrops every crop the planner should know, including ones only seen in field history
+     * @param planningYears  how many years ahead to plan
+     */
     public DynamicCropRotationPlanner(List<Crop> availableCrops, int planningYears) { // Constructor
         this.availableCrops = availableCrops;
         this.planningYears = planningYears;
         this.noCropIndex = availableCrops.size();
-
-        // Find and store the margin of the most profitable crop provided in the list
-        double largestMargin = availableCrops.stream().mapToDouble(Crop::netMarginPerHa).max().orElse(1);
-
-        // Prevent divide-by-zero later by setting a default value of 1
-        this.highestMarginPerHa = largestMargin <= 0 ? 1 : largestMargin;
     } // End of constructor
 
     /**
@@ -114,11 +78,11 @@ public class DynamicCropRotationPlanner {
      *
      * TODO: Review the available NASA data to determine if we want to include additional considerations in this calculation. eg. Weather
      *
-     * @param field
-     * @param cropOneYearAgo
-     * @param cropTwoYearsAgo
-     * @param candidateCrop
-     * @return
+     * @param field           the field being planned
+     * @param cropOneYearAgo  crop grown the year before, or {@code null} for none
+     * @param cropTwoYearsAgo crop grown two years before, or {@code null} for none
+     * @param candidateCrop   crop being considered for this year
+     * @return soil score, disease-adjusted income per hectare and an explanation
      */
     private YearScore scoreCropChoice(Field field, Crop cropOneYearAgo, Crop cropTwoYearsAgo, Crop candidateCrop) { // Scoring function
 
@@ -227,9 +191,9 @@ public class DynamicCropRotationPlanner {
      * Determine whether the crop is allowed in this field. At this time this is just based on whether the acidity of the field is in the
      * acceptable range for this plant, but could be extended later (maybe farmer blocks out specific fields for specific crops).
      *
-     * @param field
-     * @param crop
-     * @return
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return whether the crop may be planted in this field
      */
     private boolean isCropAllowed(Field field, Crop crop) {
         return field.ph() >= crop.phMin() && field.ph() <= crop.phMax();
@@ -238,11 +202,44 @@ public class DynamicCropRotationPlanner {
     /**
      * Optimize for the best crop sequence for the field, given the provided weights.
      *
-     * @param field
-     * @param weights
-     * @return
+     * <p>Every known crop is treated as growable. Use
+     * {@link #planField(Field, Set, Weights)} to limit the plan to the crops a farmer can grow.</p>
+     *
+     * @param field   the field to plan
+     * @param weights how much to value soil health against income
+     * @return the best crop sequence found
      */
     public FieldPlan planField(Field field, Weights weights) {
+        Set<String> everyCropId = new LinkedHashSet<>();
+        for (Crop crop : availableCrops) {
+            everyCropId.add(crop.id());
+        }
+        return planField(field, everyCropId, weights);
+    }
+
+    /**
+     * Optimize for the best crop sequence for the field, planting only the growable crops.
+     *
+     * <p>Crops in the field's history still count towards disease pressure and nitrogen carry-over
+     * even when the farmer will not grow them again.</p>
+     *
+     * @param field           the field to plan
+     * @param growableCropIds ids of the crops that may be planted
+     * @param weights         how much to value soil health against income
+     * @return the best crop sequence found
+     * @throws CropOptimizationValidationException when none of the growable crops suits the field
+     */
+    public FieldPlan planField(Field field, Set<String> growableCropIds, Weights weights) {
+
+        /*
+            Highest margin that can be earned per hectare from the growable crops. Used to scale income
+            to a 0 to 1.0 score, with this margin as 1.0, so it is comparable to the soil score.
+            Defaults to 1 to prevent divide-by-zero when no growable crop makes money.
+         */
+        double largestMargin = availableCrops.stream()
+                .filter(crop -> growableCropIds.contains(crop.id()))
+                .mapToDouble(Crop::netMarginPerHa).max().orElse(1);
+        double highestMarginPerHa = largestMargin <= 0 ? 1 : largestMargin;
 
         // One state for every available crop. Add one for the "no crop" option
         int numberOfStates = availableCrops.size() + 1;
@@ -250,10 +247,11 @@ public class DynamicCropRotationPlanner {
         // bestTotalScore[year][cropOneYearAgo][cropTwoYearsAgo] = best score found for reaching that situation
 
         /*
-            The best total score table has three possible dimensions:
-                Number of years + 1 TODO: Why is this +1?
-                Possible crop states year 1
-                Possible crop states year 2
+            The best total score table has three dimensions:
+                Number of years + 1: index 0 is the starting point before anything is planted (where the
+                    field's own history sits), and index N is the situation after N planned years
+                Possible crop states one year ago
+                Possible crop states two years ago
          */
         double[][][] bestTotalScore = new double[planningYears + 1][numberOfStates][numberOfStates]; // Table of best score
 
@@ -303,8 +301,8 @@ public class DynamicCropRotationPlanner {
 
                         Crop candidateCrop = availableCrops.get(candidateIndex);
 
-                        // If the field characteristics prevent planting this crop, skip it.
-                        if (!isCropAllowed(field, candidateCrop)) {
+                        // If the farmer cannot grow this crop, or the field characteristics prevent planting it, skip it.
+                        if (!growableCropIds.contains(candidateCrop.id()) || !isCropAllowed(field, candidateCrop)) {
                             continue;
                         }
 
@@ -342,11 +340,12 @@ public class DynamicCropRotationPlanner {
     /**
      * Find the best final situation, then walk backwards to recover which crop was chosen each year.
      *
-     * @param field
-     * @param bestTotalScore
-     * @param cameFromOlderCrop
-     * @param weights
-     * @return
+     * @param field             the field being planned
+     * @param bestTotalScore    best score for reaching each situation
+     * @param cameFromOlderCrop for each best score, the crop grown before the two in the state
+     * @param weights           how much to value soil health against income
+     * @return the best plan with per-year scores
+     * @throws CropOptimizationValidationException when no plan could be built
      */
     private FieldPlan rebuildBestPlan(Field field, double[][][] bestTotalScore, int[][][] cameFromOlderCrop, Weights weights) {
 
@@ -377,7 +376,8 @@ public class DynamicCropRotationPlanner {
 
         // Did we find a valid plan?
         if (bestLastCrop == -1) {
-            throw new IllegalStateException("No crop is allowed for field " + field.id());
+            throw new CropOptimizationValidationException("None of the growable crops suits field " + field.id()
+                    + " (estimated soil pH " + field.ph() + ")");
         }
 
 
@@ -409,10 +409,10 @@ public class DynamicCropRotationPlanner {
         List<String> pastCropIds = field.history();
 
         // Last year's crop (if known)
-        Crop cropOneYearAgo = pastCropIds.size() > 0 ? availableCrops.get(indexOfCrop(pastCropIds.get(0))) : null;
+        Crop cropOneYearAgo = pastCropIds.size() > 0 ? cropAt(indexOfCrop(pastCropIds.get(0))) : null;
 
         // Crop from two years ago (if known)
-        Crop cropTwoYearsAgo = pastCropIds.size() > 1 ? availableCrops.get(indexOfCrop(pastCropIds.get(1))) : null;
+        Crop cropTwoYearsAgo = pastCropIds.size() > 1 ? cropAt(indexOfCrop(pastCropIds.get(1))) : null;
 
         // Will collect one entry per year
         List<YearPlan> yearPlans = new ArrayList<>();
@@ -471,10 +471,11 @@ public class DynamicCropRotationPlanner {
 
     /**
      * Clamps the provided value between specified minimum and maximum
-     * @param value
-     * @param minimum
-     * @param maximum
-     * @return
+     *
+     * @param value   value to clamp
+     * @param minimum lowest value returned
+     * @param maximum highest value returned
+     * @return the value, limited to the range
      */
     private static double clamp(double value, double minimum, double maximum) {
         return Math.max(minimum, Math.min(maximum, value));

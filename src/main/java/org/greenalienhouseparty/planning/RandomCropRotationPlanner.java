@@ -1,7 +1,6 @@
-package org.greenalienhouseparty.service;
+package org.greenalienhouseparty.planning;
 
 import java.time.Clock;
-import java.time.Year;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.random.RandomGenerator;
@@ -11,6 +10,7 @@ import org.greenalienhouseparty.dto.CropOptimizationResponse;
 import org.greenalienhouseparty.dto.CropOptimizationResponse.PlannedYear;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,11 +21,16 @@ import org.springframework.stereotype.Component;
  * evaluate soil, weather, yield, profitability, pests, or crop reliability.</p>
  */
 @Component
+@ConditionalOnProperty(name = CropRotationPlanner.STRATEGY_PROPERTY, havingValue = "random", matchIfMissing = true)
 public class RandomCropRotationPlanner implements CropRotationPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(RandomCropRotationPlanner.class);
 
-    private static final int PLANNING_HORIZON_YEARS = 5;
+    private static final int PLANNING_HORIZON_YEARS = PlanYears.PLANNING_HORIZON_YEARS;
+
+    private static final String DISCLAIMER = "Temporary random plan only; it is not optimized for soil health, "
+            + "weather, yield, income, or crop reliability, and may repeat crops. "
+            + "Review any planting decision with local experts.";
 
     private final RandomGenerator random;
 
@@ -70,10 +75,7 @@ public class RandomCropRotationPlanner implements CropRotationPlanner {
         log.trace("Entering plan()");
         log.debug("Generating a temporary random crop plan");
         try {
-            int nextCalendarYear = Year.now(clock).getValue() + 1;
-            int firstPlanYear = field.readyDate() == null
-                    ? nextCalendarYear
-                    : Math.max(nextCalendarYear, field.readyDate().getYear());
+            int firstPlanYear = PlanYears.firstPlanYear(clock, field.readyDate());
             var years = new ArrayList<PlannedYear>(PLANNING_HORIZON_YEARS);
             for (int offset = 0; offset < PLANNING_HORIZON_YEARS; offset++) {
                 String crop = field.growableCrops().get(random.nextInt(field.growableCrops().size()));
@@ -83,5 +85,29 @@ public class RandomCropRotationPlanner implements CropRotationPlanner {
         } finally {
             log.trace("Exiting plan()");
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String id() {
+        return "random-placeholder";
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean temporary() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String disclaimer() {
+        return DISCLAIMER;
     }
 }
