@@ -17,6 +17,8 @@ import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
+import org.greenalienhouseparty.dto.DroughtIndicatorsRequest;
+import org.greenalienhouseparty.dto.DroughtIndicatorsResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldGreennessResponse;
@@ -594,6 +596,52 @@ public class DataBackendClient {
                     .body(VegetationHistoryResponse.class));
         } finally {
             log.trace("Exiting vegetationHistory()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field drought indicators endpoint (NASA GRACE
+     * groundwater and soil moisture percentiles).
+     *
+     * @param fieldId the field identifier
+     * @param weeks   recent weeks to return, or {@code null} for the default
+     * @param years   earlier years to compare, or {@code null} for the default
+     * @return drought indicators around the field
+     */
+    public DroughtIndicatorsResponse fieldDroughtIndicators(String fieldId, Integer weeks, Integer years) {
+        log.trace("Entering fieldDroughtIndicators()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/drought-indicators");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/drought-indicators")
+                            .queryParamIfPresent("weeks", Optional.ofNullable(weeks))
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(DroughtIndicatorsResponse.class));
+        } finally {
+            log.trace("Exiting fieldDroughtIndicators()");
+        }
+    }
+
+    /**
+     * Calls the drought indicators endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional weeks and years
+     * @return drought indicators around the outline
+     */
+    public DroughtIndicatorsResponse droughtIndicators(DroughtIndicatorsRequest request) {
+        log.trace("Entering droughtIndicators()");
+        log.debug("Calling Python data backend POST /drought-indicators");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/drought-indicators")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(DroughtIndicatorsResponse.class));
+        } finally {
+            log.trace("Exiting droughtIndicators()");
         }
     }
 

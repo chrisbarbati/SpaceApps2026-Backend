@@ -14,6 +14,8 @@ import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
+import org.greenalienhouseparty.dto.DroughtIndicatorsRequest;
+import org.greenalienhouseparty.dto.DroughtIndicatorsResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
@@ -393,6 +395,42 @@ public class DataBackendService {
             return client.vegetationHistory(request);
         } finally {
             log.trace("Exiting vegetationHistory()");
+        }
+    }
+
+    /**
+     * Retrieves NASA GRACE groundwater and soil moisture percentiles around an
+     * indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param weeks   recent weeks to return, or {@code null} for the default
+     * @param years   earlier years to compare, or {@code null} for the default
+     * @return drought indicators around the field
+     */
+    public DroughtIndicatorsResponse fieldDroughtIndicators(String fieldId, Integer weeks, Integer years) {
+        log.trace("Entering fieldDroughtIndicators()");
+        log.debug("Requesting field drought indicators from the data backend");
+        try {
+            return client.fieldDroughtIndicators(fieldId, weeks, years);
+        } finally {
+            log.trace("Exiting fieldDroughtIndicators()");
+        }
+    }
+
+    /**
+     * Retrieves NASA GRACE groundwater and soil moisture percentiles around a
+     * user-provided outline.
+     *
+     * @param request the polygon and optional weeks and years
+     * @return drought indicators around the outline
+     */
+    public DroughtIndicatorsResponse droughtIndicators(DroughtIndicatorsRequest request) {
+        log.trace("Entering droughtIndicators()");
+        log.debug("Requesting drought indicators for a provided outline from the data backend");
+        try {
+            return client.droughtIndicators(request);
+        } finally {
+            log.trace("Exiting droughtIndicators()");
         }
     }
 

@@ -70,6 +70,10 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> droughtQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> droughtRequestBody = new AtomicReference<>();
+
     private static final List<String> geoMetQueries = new CopyOnWriteArrayList<>();
 
     private static final AtomicReference<String> vegetationQuery = new AtomicReference<>();
@@ -455,6 +459,51 @@ class BackendApiIntegrationTest {
         assertEquals(422, get("/seasonal-outlook?lat=95&lon=0").statusCode());
         assertEquals(422, get("/seasonal-outlook?lat=44.35").statusCode());
         assertTrue(json(get("/v3/api-docs")).get("paths").has("/seasonal-outlook"));
+    }
+
+    /**
+     * Verifies drought indicators are re-exposed for a stored field and for
+     * an outline, passing optional weeks and years through, keeping nulls and
+     * preserving the missing-credentials status.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsDroughtIndicators() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/drought-indicators?weeks=4&years=2");
+        assertEquals(200, field.statusCode());
+        assertEquals("weeks=4&years=2", droughtQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(44.375, body.get("cell").get("lat").asDouble());
+        assertEquals("2026-08-31", body.get("latest").get("weekStart").asString());
+        assertEquals(75, body.get("latest").get("ageDays").asInt());
+        assertEquals(8.5, body.get("latest").get("groundwater").get("percentile").asDouble());
+        assertEquals("severely dry", body.get("latest").get("groundwater").get("condition").asString());
+        assertTrue(body.get("latest").get("surface").get("percentile").isNull());
+        assertEquals(96.1, body.get("weekly").get(0).get("rootZonePercentile").asDouble());
+        assertEquals("2025-09-01", body.get("sameWeekByYear").get(0).get("weekStart").asString());
+        assertEquals(2, body.get("conditions").get(0).get("upToPercentile").asInt());
+        assertEquals("1948-2012", body.get("baseline").asString());
+        get("/fields/field-1/drought-indicators");
+        assertEquals("null", droughtQuery.get());
+
+        HttpResponse<String> unconfigured = get("/fields/no-credentials/drought-indicators");
+        assertEquals(503, unconfigured.statusCode());
+        assertTrue(json(unconfigured).get("detail").asString().contains("EARTHDATA_USERNAME"));
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/drought-indicators", "{\"polygon\":" + outline + ",\"weeks\":8,\"years\":0}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(8, JSON.readTree(droughtRequestBody.get()).get("weeks").asInt());
+        assertEquals(0, JSON.readTree(droughtRequestBody.get()).get("years").asInt());
+        post("/drought-indicators", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(droughtRequestBody.get()).has("weeks"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/drought-indicators"));
+        assertTrue(paths.has("/drought-indicators"));
     }
 
     /**
@@ -932,6 +981,15 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/vegetation-history")) {
             vegetationRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             response = "{" + vegetationHistoryJson() + "}";
+        } else if (path.equals("/fields/field-1/drought-indicators")) {
+            droughtQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + droughtJson() + "}";
+        } else if (path.equals("/fields/no-credentials/drought-indicators")) {
+            status = 503;
+            response = "{\"detail\":\"Configure EARTHDATA_USERNAME and EARTHDATA_PASSWORD on the API host to fetch GRACE data\"}";
+        } else if (path.equals("/drought-indicators")) {
+            droughtRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + droughtJson() + "}";
         } else if (path.equals("/fields/field-1/agro-weather")) {
             agroWeatherQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\"," + agroWeatherJson() + "}";
@@ -1069,6 +1127,29 @@ class BackendApiIntegrationTest {
                 + "\"collection\":\"modis-13Q1-061\",\"resolutionM\":250,\"from\":2000}],"
                 + "\"provider\":{\"name\":\"Microsoft Planetary Computer\",\"url\":\"https://example.test/pc\"},"
                 + "\"note\":\"MODIS pixels are 250 m\"";
+    }
+
+    /**
+     * Creates a representative drought indicators body, without the surrounding braces.
+     *
+     * @return drought indicators JSON members
+     */
+    private static String droughtJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"cell\":{\"lat\":44.375,\"lon\":-79.125,\"sizeDeg\":0.25},"
+                + "\"latest\":{\"weekStart\":\"2026-08-31\",\"ageDays\":75,"
+                + "\"groundwater\":{\"percentile\":8.5,\"condition\":\"severely dry\"},"
+                + "\"rootZone\":{\"percentile\":40.0,\"condition\":\"normal\"},"
+                + "\"surface\":{\"percentile\":null,\"condition\":null}},"
+                + "\"weekly\":[{\"weekStart\":\"2026-08-24\",\"groundwaterPercentile\":9.0,\"rootZonePercentile\":96.1,"
+                + "\"surfacePercentile\":94.6}],"
+                + "\"sameWeekByYear\":[{\"weekStart\":\"2025-09-01\",\"groundwaterPercentile\":54.1,"
+                + "\"rootZonePercentile\":56.1,\"surfacePercentile\":null}],"
+                + "\"conditions\":[{\"upToPercentile\":2,\"condition\":\"exceptionally dry\"}],\"baseline\":\"1948-2012\","
+                + "\"source\":{\"name\":\"NASA GRACE and GRACE-FO Data Assimilation drought indicators\","
+                + "\"product\":\"GRACEDADM_CLSM025GL_7D\",\"url\":\"https://example.test/grace\",\"resolutionDeg\":0.25,"
+                + "\"frequency\":\"weekly\",\"institution\":\"NASA Goddard Space Flight Center\"},"
+                + "\"note\":\"Percentiles compare each layer\"";
     }
 
     /**
