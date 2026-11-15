@@ -72,6 +72,26 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Answers a failure of an external data source other than the data
+     * backend with that failure's status and a plain explanation.
+     *
+     * @param exception the external data failure
+     * @return the status and a {@code detail} message
+     */
+    @ExceptionHandler(ExternalDataException.class)
+    public ResponseEntity<Map<String, Object>> handleExternalDataException(ExternalDataException exception) {
+        log.trace("Entering handleExternalDataException()");
+        log.error("Handling external data failure with HTTP status {}", exception.getStatusCode());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("detail", exception.getMessage());
+        try {
+            return ResponseEntity.status(exception.getStatusCode()).body(body);
+        } finally {
+            log.trace("Exiting handleExternalDataException()");
+        }
+    }
+
+    /**
      * Translates request validation failures found by this application into the
      * API's standard 422 error response.
      *

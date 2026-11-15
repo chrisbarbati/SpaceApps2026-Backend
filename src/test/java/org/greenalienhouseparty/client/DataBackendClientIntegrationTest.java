@@ -118,6 +118,9 @@ class DataBackendClientIntegrationTest {
                 response = "{\"region\":\"Ontario\",\"status\":\"complete\","
                         + "\"fields\":123,\"sourceUrl\":\"https://example.test/source\","
                         + "\"completedPartitions\":7}";
+            } else if (path.equals("/fields/field-1/summary")) {
+                sentSummaryRequest.set(exchange.getRequestURI().getQuery());
+                response = "{\"id\":\"field-1\"," + summaryResponse().substring(1);
             } else if (path.equals("/field-summary")) {
                 try {
                     sentSummaryRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -190,12 +193,18 @@ class DataBackendClientIntegrationTest {
             assertEquals(4321.5, summary.climate().gddAnnualMedian());
             assertEquals(3533.2, summary.climate().chuAvailableMedian());
             assertEquals(125.0, summary.water().seasonEt0MmMedian());
+            assertEquals(2023, summary.yearly().years().getFirst().year());
+            assertEquals(3330.2, summary.yearly().years().getFirst().chuAvailable());
+            assertNull(summary.yearly().years().getFirst().gddAnnual());
+            assertEquals(3072.4, summary.yearly().percentiles().get("chu_available").p10());
+            assertEquals(10, summary.yearly().percentiles().get("chu_available").years());
             assertEquals("power", summary.weatherSource());
             assertEquals("ok", summary.layers().weather().status());
             assertEquals("power", summary.layers().weather().source());
             assertNull(summary.layers().weather().fallbackFrom());
             assertNull(summary.layers().terrain().source());
             assertNull(summary.terrain());
+            assertNull(summary.id());
             assertEquals("NASA POWER", summary.source().getFirst().getSource());
             assertEquals(50, summary.source().getFirst().getExtra().get("spatial_resolution_km").asInt());
 
@@ -204,6 +213,13 @@ class DataBackendClientIntegrationTest {
             assertEquals("2023-01-01", sent.get("period").get("start").asString());
             assertEquals(0.05, sent.get("weatherGridDeg").asDouble());
             assertEquals("power", sent.get("weatherSource").asString());
+
+            FieldSummaryResponse stored = client.fieldSummary("field-1", "daymet");
+            assertEquals("field-1", stored.id());
+            assertEquals(4321.5, stored.climate().gddAnnualMedian());
+            assertEquals("weatherSource=daymet", sentSummaryRequest.get());
+            client.fieldSummary("field-1", null);
+            assertNull(sentSummaryRequest.get());
 
             CropHistoryRequest cropRequest = new CropHistoryRequest();
             cropRequest.setPolygon(JSON.readTree(POLYGON));
@@ -366,6 +382,9 @@ class DataBackendClientIntegrationTest {
                 + "\"climate\":{\"gdd_annual_median\":4321.5,\"chu_available_median\":3533.2,"
                 + "\"precip_trend_mm_per_year\":2.1},"
                 + "\"water\":{\"season_et0_mm_median\":125.0},"
+                + "\"yearly\":{\"years\":[{\"year\":2023,\"chu_available\":3330.2,\"season_precip_mm\":461.6,"
+                + "\"gdd_annual\":null}],\"percentiles\":{\"chu_available\":{\"p10\":3072.4,\"p50\":3211.5,"
+                + "\"p90\":3446.9,\"years\":10},\"gdd_annual\":null}},"
                 + "\"frost\":{\"last_spring_frost\":\"04-20\",\"first_fall_frost\":\"10-10\","
                 + "\"last_spring_frost_doy\":110,\"first_fall_frost_doy\":283,"
                 + "\"frost_free_season_days\":173,\"spring_frost_years\":5,"

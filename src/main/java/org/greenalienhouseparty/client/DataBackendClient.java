@@ -11,9 +11,15 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.greenalienhouseparty.config.RequestIdFilter;
+import org.greenalienhouseparty.dto.AgroWeatherRequest;
+import org.greenalienhouseparty.dto.AgroWeatherResponse;
+import org.greenalienhouseparty.dto.CropCalendarRequest;
+import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
+import org.greenalienhouseparty.dto.DroughtIndicatorsRequest;
+import org.greenalienhouseparty.dto.DroughtIndicatorsResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldGreennessResponse;
@@ -30,6 +36,8 @@ import org.greenalienhouseparty.dto.HlsAcquisitionResponse;
 import org.greenalienhouseparty.dto.ImageryRequest;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.VegetationHistoryRequest;
+import org.greenalienhouseparty.dto.VegetationHistoryResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
@@ -293,6 +301,29 @@ public class DataBackendClient {
     }
 
     /**
+     * Calls the data backend's environmental summary for a stored field, with
+     * the default years and growing season.
+     *
+     * @param fieldId       the field identifier
+     * @param weatherSource {@code auto}, {@code daymet} or {@code power}, or {@code null} for the default
+     * @return the environmental summary, with the field identifier
+     */
+    public FieldSummaryResponse fieldSummary(String fieldId, String weatherSource) {
+        log.trace("Entering fieldSummary()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/summary");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/summary")
+                            .queryParamIfPresent("weatherSource", Optional.ofNullable(weatherSource))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(FieldSummaryResponse.class));
+        } finally {
+            log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
      * Starts or polls Python's nonblocking field-season acquisition with Java-selected dates.
      *
      * @param fieldId stored field identifier
@@ -474,6 +505,186 @@ public class DataBackendClient {
                     .body(FieldSoilBatchResponse.class));
         } finally {
             log.trace("Exiting fieldSoils()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field agro-weather endpoint (NASA POWER soil
+     * wetness, radiation, wind, humidity and ET0).
+     *
+     * @param fieldId the field identifier
+     * @param years   years of history to read, or {@code null} for the default
+     * @return agro-weather around the field
+     */
+    public AgroWeatherResponse fieldAgroWeather(String fieldId, Integer years) {
+        log.trace("Entering fieldAgroWeather()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/agro-weather");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/agro-weather")
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(AgroWeatherResponse.class));
+        } finally {
+            log.trace("Exiting fieldAgroWeather()");
+        }
+    }
+
+    /**
+     * Calls the agro-weather endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional years of history
+     * @return agro-weather around the outline
+     */
+    public AgroWeatherResponse agroWeather(AgroWeatherRequest request) {
+        log.trace("Entering agroWeather()");
+        log.debug("Calling Python data backend POST /agro-weather");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/agro-weather")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(AgroWeatherResponse.class));
+        } finally {
+            log.trace("Exiting agroWeather()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field crop calendar endpoint.
+     *
+     * @param fieldId the field identifier
+     * @param system  {@code rainfed} or {@code irrigated}, or {@code null} for the default
+     * @param crops   comma-separated calendar crop keys, or {@code null} for every crop
+     * @return usual planting and maturity dates around the field
+     */
+    public CropCalendarResponse fieldCropCalendar(String fieldId, String system, String crops) {
+        log.trace("Entering fieldCropCalendar()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/crop-calendar");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/crop-calendar")
+                            .queryParamIfPresent("system", Optional.ofNullable(system))
+                            .queryParamIfPresent("crops", Optional.ofNullable(crops))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(CropCalendarResponse.class));
+        } finally {
+            log.trace("Exiting fieldCropCalendar()");
+        }
+    }
+
+    /**
+     * Calls the crop calendar endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional system and crops
+     * @return usual planting and maturity dates around the outline
+     */
+    public CropCalendarResponse cropCalendar(CropCalendarRequest request) {
+        log.trace("Entering cropCalendar()");
+        log.debug("Calling Python data backend POST /crop-calendar");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/crop-calendar")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(CropCalendarResponse.class));
+        } finally {
+            log.trace("Exiting cropCalendar()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field vegetation history endpoint. The first
+     * request for a field reads many satellite files and takes about 30 seconds
+     * for 5 years.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of 16-day NDVI to read, or {@code null} for the default
+     * @return MODIS vegetation history of the field
+     */
+    public VegetationHistoryResponse fieldVegetationHistory(String fieldId, Integer years) {
+        log.trace("Entering fieldVegetationHistory()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/vegetation-history");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/vegetation-history")
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(VegetationHistoryResponse.class));
+        } finally {
+            log.trace("Exiting fieldVegetationHistory()");
+        }
+    }
+
+    /**
+     * Calls the vegetation history endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional years of NDVI
+     * @return MODIS vegetation history of the outline
+     */
+    public VegetationHistoryResponse vegetationHistory(VegetationHistoryRequest request) {
+        log.trace("Entering vegetationHistory()");
+        log.debug("Calling Python data backend POST /vegetation-history");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/vegetation-history")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(VegetationHistoryResponse.class));
+        } finally {
+            log.trace("Exiting vegetationHistory()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field drought indicators endpoint (NASA GRACE
+     * groundwater and soil moisture percentiles).
+     *
+     * @param fieldId the field identifier
+     * @param weeks   recent weeks to return, or {@code null} for the default
+     * @param years   earlier years to compare, or {@code null} for the default
+     * @return drought indicators around the field
+     */
+    public DroughtIndicatorsResponse fieldDroughtIndicators(String fieldId, Integer weeks, Integer years) {
+        log.trace("Entering fieldDroughtIndicators()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/drought-indicators");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/drought-indicators")
+                            .queryParamIfPresent("weeks", Optional.ofNullable(weeks))
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(DroughtIndicatorsResponse.class));
+        } finally {
+            log.trace("Exiting fieldDroughtIndicators()");
+        }
+    }
+
+    /**
+     * Calls the drought indicators endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional weeks and years
+     * @return drought indicators around the outline
+     */
+    public DroughtIndicatorsResponse droughtIndicators(DroughtIndicatorsRequest request) {
+        log.trace("Entering droughtIndicators()");
+        log.debug("Calling Python data backend POST /drought-indicators");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/drought-indicators")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(DroughtIndicatorsResponse.class));
+        } finally {
+            log.trace("Exiting droughtIndicators()");
         }
     }
 

@@ -7,9 +7,15 @@ import java.util.Set;
 import java.util.function.Function;
 
 import org.greenalienhouseparty.client.DataBackendClient;
+import org.greenalienhouseparty.dto.AgroWeatherRequest;
+import org.greenalienhouseparty.dto.AgroWeatherResponse;
+import org.greenalienhouseparty.dto.CropCalendarRequest;
+import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
+import org.greenalienhouseparty.dto.DroughtIndicatorsRequest;
+import org.greenalienhouseparty.dto.DroughtIndicatorsResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
@@ -25,6 +31,8 @@ import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.VegetationHistoryRequest;
+import org.greenalienhouseparty.dto.VegetationHistoryResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.slf4j.Logger;
@@ -189,6 +197,24 @@ public class DataBackendService {
     }
 
     /**
+     * Retrieves the environmental summary of a stored field, with the default
+     * years and growing season.
+     *
+     * @param fieldId       the field identifier
+     * @param weatherSource {@code auto}, {@code daymet} or {@code power}, or {@code null} for the default
+     * @return the environmental summary, with the field identifier
+     */
+    public FieldSummaryResponse fieldSummary(String fieldId, String weatherSource) {
+        log.trace("Entering fieldSummary()");
+        log.debug("Requesting a stored field's environmental summary from the data backend");
+        try {
+            return client.fieldSummary(fieldId, weatherSource);
+        } finally {
+            log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
      * Retrieves crop history for an indexed field.
      *
      * @param fieldId the field identifier
@@ -294,6 +320,143 @@ public class DataBackendService {
             return new FieldCropHistoryBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
         } finally {
             log.trace("Exiting fieldCropHistories()");
+        }
+    }
+
+    /**
+     * Retrieves NASA POWER agro-weather (soil wetness, radiation, wind,
+     * humidity and ET0) around an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of history to read, or {@code null} for the default
+     * @return agro-weather around the field
+     */
+    public AgroWeatherResponse fieldAgroWeather(String fieldId, Integer years) {
+        log.trace("Entering fieldAgroWeather()");
+        log.debug("Requesting field agro-weather from the data backend");
+        try {
+            return client.fieldAgroWeather(fieldId, years);
+        } finally {
+            log.trace("Exiting fieldAgroWeather()");
+        }
+    }
+
+    /**
+     * Retrieves NASA POWER agro-weather around a user-provided outline.
+     *
+     * @param request the polygon and optional years of history
+     * @return agro-weather around the outline
+     */
+    public AgroWeatherResponse agroWeather(AgroWeatherRequest request) {
+        log.trace("Entering agroWeather()");
+        log.debug("Requesting agro-weather for a provided outline from the data backend");
+        try {
+            return client.agroWeather(request);
+        } finally {
+            log.trace("Exiting agroWeather()");
+        }
+    }
+
+    /**
+     * Retrieves usual planting and maturity dates around an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param system  {@code rainfed} or {@code irrigated}, or {@code null} for the default
+     * @param crops   comma-separated calendar crop keys, or {@code null} for every crop
+     * @return the crop calendar around the field
+     */
+    public CropCalendarResponse fieldCropCalendar(String fieldId, String system, String crops) {
+        log.trace("Entering fieldCropCalendar()");
+        log.debug("Requesting field crop calendar from the data backend");
+        try {
+            return client.fieldCropCalendar(fieldId, system, crops);
+        } finally {
+            log.trace("Exiting fieldCropCalendar()");
+        }
+    }
+
+    /**
+     * Retrieves usual planting and maturity dates around a user-provided outline.
+     *
+     * @param request the polygon and optional system and crops
+     * @return the crop calendar around the outline
+     */
+    public CropCalendarResponse cropCalendar(CropCalendarRequest request) {
+        log.trace("Entering cropCalendar()");
+        log.debug("Requesting crop calendar for a provided outline from the data backend");
+        try {
+            return client.cropCalendar(request);
+        } finally {
+            log.trace("Exiting cropCalendar()");
+        }
+    }
+
+    /**
+     * Retrieves the MODIS vegetation history of an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of 16-day NDVI to read, or {@code null} for the default
+     * @return NDVI seasons, low-cover windows and yearly growth and water use
+     */
+    public VegetationHistoryResponse fieldVegetationHistory(String fieldId, Integer years) {
+        log.trace("Entering fieldVegetationHistory()");
+        log.debug("Requesting field vegetation history from the data backend");
+        try {
+            return client.fieldVegetationHistory(fieldId, years);
+        } finally {
+            log.trace("Exiting fieldVegetationHistory()");
+        }
+    }
+
+    /**
+     * Retrieves the MODIS vegetation history of a user-provided outline.
+     *
+     * @param request the polygon and optional years of NDVI
+     * @return NDVI seasons, low-cover windows and yearly growth and water use
+     */
+    public VegetationHistoryResponse vegetationHistory(VegetationHistoryRequest request) {
+        log.trace("Entering vegetationHistory()");
+        log.debug("Requesting vegetation history for a provided outline from the data backend");
+        try {
+            return client.vegetationHistory(request);
+        } finally {
+            log.trace("Exiting vegetationHistory()");
+        }
+    }
+
+    /**
+     * Retrieves NASA GRACE groundwater and soil moisture percentiles around an
+     * indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param weeks   recent weeks to return, or {@code null} for the default
+     * @param years   earlier years to compare, or {@code null} for the default
+     * @return drought indicators around the field
+     */
+    public DroughtIndicatorsResponse fieldDroughtIndicators(String fieldId, Integer weeks, Integer years) {
+        log.trace("Entering fieldDroughtIndicators()");
+        log.debug("Requesting field drought indicators from the data backend");
+        try {
+            return client.fieldDroughtIndicators(fieldId, weeks, years);
+        } finally {
+            log.trace("Exiting fieldDroughtIndicators()");
+        }
+    }
+
+    /**
+     * Retrieves NASA GRACE groundwater and soil moisture percentiles around a
+     * user-provided outline.
+     *
+     * @param request the polygon and optional weeks and years
+     * @return drought indicators around the outline
+     */
+    public DroughtIndicatorsResponse droughtIndicators(DroughtIndicatorsRequest request) {
+        log.trace("Entering droughtIndicators()");
+        log.debug("Requesting drought indicators for a provided outline from the data backend");
+        try {
+            return client.droughtIndicators(request);
+        } finally {
+            log.trace("Exiting droughtIndicators()");
         }
     }
 

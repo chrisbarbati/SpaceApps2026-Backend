@@ -69,6 +69,28 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> agroWeatherQuery = new AtomicReference<>();
+
+    private static final List<String> fieldSectionRequestIds = new CopyOnWriteArrayList<>();
+
+    private static final AtomicReference<String> agroWeatherRequestBody = new AtomicReference<>();
+
+    private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
+
+    private static final AtomicReference<String> droughtQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> droughtRequestBody = new AtomicReference<>();
+
+    private static final List<String> geoMetQueries = new CopyOnWriteArrayList<>();
+
+    private static final AtomicReference<String> vegetationQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> vegetationRequestBody = new AtomicReference<>();
+
+    private static final AtomicReference<String> cropCalendarQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> cropCalendarRequestBody = new AtomicReference<>();
+
     private static HttpServer dataBackend;
 
     @LocalServerPort
@@ -112,6 +134,9 @@ class BackendApiIntegrationTest {
             throw new IllegalStateException("Unable to start the local data backend stub", e);
         }
         registry.add("data.backend.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort());
+        registry.add("statcan.wds.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/statcan");
+        registry.add("geomet.wms.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/geomet");
+        registry.add("aafc.arcgis.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/aafc");
         registry.add("imagery.render.allowed-prefix", BackendApiIntegrationTest::renderPrefix);
     }
 
@@ -194,6 +219,8 @@ class BackendApiIntegrationTest {
         HttpResponse<String> area = get("/fields/field-1");
         assertEquals(200, area.statusCode());
         assertEquals(12.3, json(area).get("hectares").asDouble());
+        assertEquals(30.4, json(area).get("acres").asDouble());
+        assertEquals(404, get("/fields/missing").statusCode());
 
         HttpResponse<String> fieldCropHistory = get("/fields/field-1/crop-history");
         assertEquals(200, fieldCropHistory.statusCode());
@@ -289,6 +316,380 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies GET /fields/{field_id} returns the field's size with every
+     * default section fetched, the location-based sections looked up at the
+     * climate summary's centre, the slow sections only when requested, a
+     * failing section reported without failing the request, the caller's
+     * request ID on every data backend call, and a bad include rejected.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsEverythingKnownAboutAField() throws Exception {
+        fieldSectionRequestIds.clear();
+        HttpResponse<String> response = get("/fields/field-1", "field-details-trace");
+
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(12.3, body.get("hectares").asDouble());
+        assertEquals(30.4, body.get("acres").asDouble());
+        assertEquals(45.2, body.get("location").get("lat").asDouble());
+        assertEquals("climate", body.get("location").get("source").asString());
+        assertTrue(body.get("soil").has("topsoil"));
+        assertEquals("Soybeans", body.get("cropHistory").get("years").get(0).get("crop").asString());
+        assertEquals("field-1", body.get("climate").get("id").asString());
+        assertEquals(2900.0, body.get("climate").get("climate").get("chu_available_median").asDouble());
+        assertEquals("corn", body.get("cropCalendar").get("crops").get(0).get("crop").asString());
+        assertEquals("dry", body.get("agroWeather").get("soilWetness").get("latest").get("status").asString());
+        assertEquals("2", body.get("soilLandscape").get("landCapability").get("classCode").asString());
+        assertEquals(3, body.get("seasonalOutlook").get("periods").size());
+        assertTrue(body.get("greenness").isNull());
+        assertTrue(body.get("vegetationHistory").isNull());
+        assertTrue(body.get("droughtIndicators").isNull());
+        JsonNode sections = body.get("sections");
+        assertEquals(10, sections.size());
+        for (String name : List.of("soil", "cropHistory", "climate", "cropCalendar", "agroWeather", "soilLandscape",
+                "seasonalOutlook")) {
+            assertEquals("ok", sections.get(name).get("status").asString(), name);
+            assertTrue(!sections.get(name).has("detail"));
+        }
+        assertEquals("not_requested", sections.get("vegetationHistory").get("status").asString());
+        assertEquals("Add include=vegetation (or include=all) to fetch it.",
+                sections.get("vegetationHistory").get("detail").asString());
+        assertEquals(5, fieldSectionRequestIds.size());
+        assertTrue(fieldSectionRequestIds.stream().allMatch("field-details-trace"::equals));
+
+        JsonNode everything = json(get("/fields/field-1?include=all"));
+        assertEquals("2024-06-09", everything.get("vegetationHistory").get("ndvi").get("byYear").get(0)
+                .get("greenUpDate").asString());
+        assertEquals("2026-08-31", everything.get("droughtIndicators").get("latest").get("weekStart").asString());
+        assertEquals("ok", everything.get("sections").get("greenness").get("status").asString());
+        assertTrue(everything.get("greenness").has("id"));
+
+        JsonNode some = json(get("/fields/field-1?include=Drought,%20vegetation"));
+        assertEquals("ok", some.get("sections").get("droughtIndicators").get("status").asString());
+        assertEquals("ok", some.get("sections").get("vegetationHistory").get("status").asString());
+        assertEquals("not_requested", some.get("sections").get("greenness").get("status").asString());
+
+        HttpResponse<String> badInclude = get("/fields/field-1?include=imagery");
+        assertEquals(422, badInclude.statusCode());
+        assertTrue(json(badInclude).get("detail").asString().contains("greenness, vegetation, drought or all"));
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/fields/{field_id}/summary"));
+    }
+
+    /**
+     * Verifies a section whose source fails is reported as unavailable with
+     * the reason while the rest of the field is still returned, and that the
+     * location-based sections fall back to the crop calendar's location.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void reportsUnavailableFieldSectionsWithoutFailing() throws Exception {
+        HttpResponse<String> response = get("/fields/field-2");
+
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals(5.0, body.get("hectares").asDouble());
+        assertTrue(body.get("climate").isNull());
+        JsonNode climate = body.get("sections").get("climate");
+        assertEquals("unavailable", climate.get("status").asString());
+        assertEquals("The data backend answered HTTP 502: NASA POWER daily weather is unavailable or invalid",
+                climate.get("detail").asString());
+        assertEquals("unavailable", body.get("sections").get("soil").get("status").asString());
+        assertEquals("cropCalendar", body.get("location").get("source").asString());
+        assertEquals(46.1, body.get("location").get("lat").asDouble());
+        assertEquals("ok", body.get("sections").get("cropCalendar").get("status").asString());
+        assertEquals("ok", body.get("sections").get("soilLandscape").get("status").asString());
+    }
+
+    /**
+     * Verifies crop reference data and Statistics Canada market data are
+     * served, and that a Statistics Canada outage and an unknown province are
+     * reported with their own statuses.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsCropReferenceAndMarketData() throws Exception {
+        JsonNode reference = json(get("/crops/reference"));
+        assertEquals("FAO ECOCROP", reference.get("sources").get("requirements").get("name").asString());
+        assertEquals("Zea mays", reference.get("crops").get(0).get("scientificName").asString());
+        assertEquals(4.5, reference.get("crops").get(0).get("requirements").get("phMin").asDouble());
+        assertEquals(170.0, reference.get("crops").get(0).get("estimates").get("nDemandKgHa").asDouble());
+
+        statCanUp.set(false);
+        HttpResponse<String> outage = get("/crops/market?province=QC");
+        assertEquals(502, outage.statusCode());
+        assertEquals("Statistics Canada is unavailable", json(outage).get("detail").asString());
+        statCanUp.set(true);
+
+        HttpResponse<String> market = get("/crops/market");
+        assertEquals(200, market.statusCode());
+        JsonNode body = json(market);
+        assertEquals("ON", body.get("province").asString());
+        assertEquals(9, body.get("crops").size());
+        JsonNode corn = body.get("crops").get(0);
+        assertEquals("corn", corn.get("cropId").asString());
+        assertEquals(11000.0, corn.get("yieldKgPerHa").asDouble());
+        assertEquals(2025, corn.get("yieldYear").asInt());
+        assertEquals("2026-09", corn.get("priceMonth").asString());
+        assertEquals(2750.0, corn.get("grossRevenuePerHa").asDouble());
+        JsonNode grapes = body.get("crops").get(8);
+        assertTrue(grapes.get("yieldKgPerHa").isNull());
+        assertEquals(1, grapes.get("notes").size());
+
+        assertEquals(422, get("/crops/market?province=ZZ").statusCode());
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/crops/market"));
+        assertTrue(paths.has("/crops/reference"));
+    }
+
+    /**
+     * Verifies the crop calendar is re-exposed for a stored field and for an
+     * outline, passing the optional system and crops through and keeping
+     * nulls and upstream validation errors.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsCropCalendar() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/crop-calendar?system=irrigated&crops=corn,winter_wheat");
+        assertEquals(200, field.statusCode());
+        assertEquals("system=irrigated&crops=corn,winter_wheat", cropCalendarQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(44.25, body.get("cell").get("lat").asDouble());
+        JsonNode corn = body.get("crops").get(0);
+        assertEquals("corn", corn.get("crop").asString());
+        assertEquals(121, corn.get("plantingDay").asInt());
+        assertEquals("05-01", corn.get("plantingDate").asString());
+        assertEquals(203, corn.get("offSeasonDays").asInt());
+        assertTrue(!corn.get("crossesNewYear").asBoolean());
+        assertTrue(body.get("crops").get(1).get("crossesNewYear").asBoolean());
+        assertTrue(body.get("crops").get(2).get("plantingDay").isNull());
+        assertEquals("10.5281/zenodo.5062513", body.get("source").get("doi").asString());
+        get("/fields/field-1/crop-calendar");
+        assertEquals("null", cropCalendarQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/crop-calendar",
+                "{\"polygon\":" + outline + ",\"system\":\"rainfed\",\"crops\":[\"corn\"]}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals("corn", JSON.readTree(cropCalendarRequestBody.get()).get("crops").get(0).asString());
+        post("/crop-calendar", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(cropCalendarRequestBody.get()).has("system"));
+        assertTrue(!JSON.readTree(cropCalendarRequestBody.get()).has("crops"));
+        HttpResponse<String> invalid = post("/crop-calendar", "{\"polygon\":" + outline + ",\"crops\":[\"oats\"]}");
+        assertEquals(422, invalid.statusCode());
+        assertEquals("unknown crops: oats", json(invalid).get("detail").asString());
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/crop-calendar"));
+        assertTrue(paths.has("/crop-calendar"));
+    }
+
+    /**
+     * Verifies vegetation history is re-exposed for a stored field and for an
+     * outline, passing the optional years through and keeping nulls.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsVegetationHistory() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/vegetation-history?years=3");
+        assertEquals(200, field.statusCode());
+        assertEquals("years=3", vegetationQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        JsonNode ndvi = body.get("ndvi");
+        assertEquals(0.3, ndvi.get("lowCoverThreshold").asDouble());
+        assertTrue(ndvi.get("observations").get(0).get("ndvi").isNull());
+        assertTrue(ndvi.get("observations").get(0).get("snow").asBoolean());
+        assertEquals(0.804, ndvi.get("observations").get(1).get("ndvi").asDouble());
+        assertEquals("2024-06-09", ndvi.get("byYear").get(0).get("greenUpDate").asString());
+        assertTrue(ndvi.get("byYear").get(1).get("peakNdvi").isNull());
+        assertEquals(1.0, ndvi.get("calendar").get(0).get("lowCoverShare").asDouble());
+        assertEquals("12-03", ndvi.get("lowCoverWindows").get(0).get("startDate").asString());
+        assertEquals(157, ndvi.get("lowCoverWindows").get(0).get("days").asInt());
+        assertEquals(128.0, ndvi.get("typical").get("lowCoverDays").asDouble());
+        assertEquals(0.557, body.get("yearly").get(0).get("nppKgCPerM2").asDouble());
+        assertEquals(0.51, body.get("yearly").get(0).get("etShareOfPet").asDouble());
+        assertEquals(560.6, body.get("yearlySummary").get("etMedianMm").asDouble());
+        assertEquals("modis-13Q1-061", body.get("source").get(0).get("collection").asString());
+        get("/fields/field-1/vegetation-history");
+        assertEquals("null", vegetationQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/vegetation-history", "{\"polygon\":" + outline + ",\"years\":2}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(2, JSON.readTree(vegetationRequestBody.get()).get("years").asInt());
+        post("/vegetation-history", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(vegetationRequestBody.get()).has("years"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/vegetation-history"));
+        assertTrue(paths.has("/vegetation-history"));
+    }
+
+    /**
+     * Verifies the seasonal outlook is read from Environment Canada for the
+     * newest run, that a point without an outlook returns no periods, and
+     * that bad coordinates are rejected.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsSeasonalOutlook() throws Exception {
+        geoMetQueries.clear();
+        HttpResponse<String> outlook = get("/seasonal-outlook?lat=44.35&lon=-79.16");
+        assertEquals(200, outlook.statusCode());
+        JsonNode body = json(outlook);
+        assertEquals("2026-11", body.get("issued").asString());
+        assertEquals(3, body.get("periods").size());
+        JsonNode first = body.get("periods").get(0);
+        assertEquals("Nov 2026 - Jan 2027", first.get("label").asString());
+        assertEquals(61.3, first.get("temperature").get("abovePct").asDouble());
+        assertEquals(13.3, first.get("precipitation").get("belowPct").asDouble());
+        assertEquals("above", first.get("temperature").get("mostLikely").asString());
+        assertEquals("2027-07", body.get("periods").get(2).get("endMonth").asString());
+        assertEquals(19, geoMetQueries.size());
+        assertTrue(geoMetQueries.stream().anyMatch(q -> q.contains("layers=CanSIPS_100km_PrecipAccum-ProbBelowNormal-2m_PT3M")
+                && q.contains("time=2027-05-01T00:00:00Z") && q.contains("dim_reference_time=2026-11-01T00:00:00Z")
+                && q.contains("request=GetFeatureInfo") && q.contains("bbox=44.3000,-79.2100,44.4000,-79.1100")));
+
+        JsonNode nowhere = json(get("/seasonal-outlook?lat=0&lon=0"));
+        assertTrue(nowhere.get("issued").isNull());
+        assertEquals(0, nowhere.get("periods").size());
+
+        assertEquals(422, get("/seasonal-outlook?lat=95&lon=0").statusCode());
+        assertEquals(422, get("/seasonal-outlook?lat=44.35").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/seasonal-outlook"));
+    }
+
+    /**
+     * Verifies drought indicators are re-exposed for a stored field and for
+     * an outline, passing optional weeks and years through, keeping nulls and
+     * preserving the missing-credentials status.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsDroughtIndicators() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/drought-indicators?weeks=4&years=2");
+        assertEquals(200, field.statusCode());
+        assertEquals("weeks=4&years=2", droughtQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(44.375, body.get("cell").get("lat").asDouble());
+        assertEquals("2026-08-31", body.get("latest").get("weekStart").asString());
+        assertEquals(75, body.get("latest").get("ageDays").asInt());
+        assertEquals(8.5, body.get("latest").get("groundwater").get("percentile").asDouble());
+        assertEquals("severely dry", body.get("latest").get("groundwater").get("condition").asString());
+        assertTrue(body.get("latest").get("surface").get("percentile").isNull());
+        assertEquals(96.1, body.get("weekly").get(0).get("rootZonePercentile").asDouble());
+        assertEquals("2025-09-01", body.get("sameWeekByYear").get(0).get("weekStart").asString());
+        assertEquals(2, body.get("conditions").get(0).get("upToPercentile").asInt());
+        assertEquals("1948-2012", body.get("baseline").asString());
+        get("/fields/field-1/drought-indicators");
+        assertEquals("null", droughtQuery.get());
+
+        HttpResponse<String> unconfigured = get("/fields/no-credentials/drought-indicators");
+        assertEquals(503, unconfigured.statusCode());
+        assertTrue(json(unconfigured).get("detail").asString().contains("EARTHDATA_USERNAME"));
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/drought-indicators", "{\"polygon\":" + outline + ",\"weeks\":8,\"years\":0}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(8, JSON.readTree(droughtRequestBody.get()).get("weeks").asInt());
+        assertEquals(0, JSON.readTree(droughtRequestBody.get()).get("years").asInt());
+        post("/drought-indicators", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(droughtRequestBody.get()).has("weeks"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/drought-indicators"));
+        assertTrue(paths.has("/drought-indicators"));
+    }
+
+    /**
+     * Verifies land capability, drainage and soil indicators are read from
+     * Agriculture and Agri-Food Canada, that a point outside Canada returns
+     * no values, and that a service error and bad coordinates are reported.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsSoilLandscape() throws Exception {
+        HttpResponse<String> landscape = get("/soil-landscape?lat=44.3457&lon=-79.1569");
+        assertEquals(200, landscape.statusCode());
+        JsonNode body = json(landscape);
+        assertEquals("Canada", body.get("coverage").asString());
+        assertEquals("2", body.get("landCapability").get("classCode").asString());
+        assertEquals("S", body.get("landCapability").get("limitations").get(0).get("code").asString());
+        assertEquals("Well and moderately well drained", body.get("drainage").get("description").asString());
+        assertEquals(2, body.get("indicators").size());
+        JsonNode erosion = body.get("indicators").get(0);
+        assertEquals("erosionRisk", erosion.get("key").asString());
+        assertEquals(12.47, erosion.get("value").asDouble());
+        assertEquals("Moderate", erosion.get("rating").asString());
+        assertEquals(1981, erosion.get("change").get("fromYear").asInt());
+        assertEquals(2, erosion.get("history").size());
+        assertEquals("soilCoverDays", body.get("indicators").get(1).get("key").asString());
+        assertTrue(body.get("indicators").get(1).get("change").isNull());
+
+        JsonNode outside = json(get("/soil-landscape?lat=40.45&lon=-88.95"));
+        assertTrue(outside.get("coverage").isNull());
+        assertTrue(outside.get("landCapability").isNull());
+        assertEquals(0, outside.get("indicators").size());
+
+        HttpResponse<String> failed = get("/soil-landscape?lat=46.0&lon=-60.0");
+        assertEquals(502, failed.statusCode());
+        assertTrue(json(failed).get("detail").asString().contains("soil service is unavailable"));
+        assertEquals(422, get("/soil-landscape?lat=44.3&lon=200").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/soil-landscape"));
+    }
+
+    /**
+     * Verifies agro-weather is re-exposed for a stored field and for an
+     * outline, passing the optional years through and keeping nulls.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsAgroWeather() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/agro-weather?years=10");
+        assertEquals(200, field.statusCode());
+        assertEquals("years=10", agroWeatherQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals("dry", body.get("soilWetness").get("latest").get("status").asString());
+        assertEquals(0, body.get("soilWetness").get("latest").get("percentile").asInt());
+        assertEquals(0.455, body.get("soilWetness").get("seasonPercentiles").get("rootZone").get("p50").asDouble());
+        assertEquals(537.9, body.get("et0").get("seasonPercentilesMm").get("p50").asDouble());
+        assertEquals(2025, body.get("seasonByYear").get(0).get("year").asInt());
+        assertTrue(body.get("seasonByYear").get(0).get("et0Mm").isNull());
+        assertEquals(241.1, body.get("location").get("elevationM").asDouble());
+        get("/fields/field-1/agro-weather");
+        assertEquals("null", agroWeatherQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/agro-weather", "{\"polygon\":" + outline + ",\"years\":12}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(12, JSON.readTree(agroWeatherRequestBody.get()).get("years").asInt());
+        post("/agro-weather", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(agroWeatherRequestBody.get()).has("years"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/agro-weather"));
+        assertTrue(paths.has("/agro-weather"));
+    }
+
+    /**
      * Verifies the new data backend routes are included in the generated
      * OpenAPI document.
      *
@@ -361,14 +762,19 @@ class BackendApiIntegrationTest {
     void exposesCropCatalogAndTemporaryFiveYearPlans() throws Exception {
         HttpResponse<String> catalog = get("/crops");
         assertEquals(200, catalog.statusCode());
-        assertEquals("Corn", json(catalog).get("crops").get(0).asString());
+        JsonNode corn = json(catalog).get("crops").get(0);
+        assertEquals("corn", corn.get("id").asString());
+        assertEquals("Corn", corn.get("name").asString());
+        assertEquals("Poaceae", corn.get("family").asString());
+        assertTrue(corn.has("nDemandKgHa") && corn.has("netMarginPerHa") && corn.has("diseaseSusceptibility"));
+        assertTrue(json(catalog).get("exampleData").asBoolean());
         assertTrue(json(catalog).get("crops").size() >= 1);
 
         LocalDate readyDate = LocalDate.now().plusYears(2);
         String requestBody = """
                 {"fields":[
                   {"fieldId":"field-1","geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]},"currentCrop":"Corn","growableCrops":["Soybeans","Wheat"]},
-                  {"fieldId":"field-2","geometry":{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,2],[1,1]]]},"currentCrop":"Soybeans","growableCrops":["Oats"],"readyDate":"%s"}
+                  {"fieldId":"field-2","geometry":{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,2],[1,1]]]},"currentCrop":"soybeans","growableCrops":["oats"],"readyDate":"%s"}
                 ]}
                 """.formatted(readyDate);
 
@@ -689,6 +1095,9 @@ class BackendApiIntegrationTest {
     private static void handleDataBackendRequest(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
         receivedRequestId.set(exchange.getRequestHeaders().getFirst(RequestIdFilter.REQUEST_ID_HEADER));
+        if (path.startsWith("/fields/field-1/")) {
+            fieldSectionRequestIds.add(String.valueOf(exchange.getRequestHeaders().getFirst(RequestIdFilter.REQUEST_ID_HEADER)));
+        }
         int status = 200;
         String response;
         if (path.equals("/health")) {
@@ -734,6 +1143,98 @@ class BackendApiIntegrationTest {
             response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
                     + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.startsWith("/aafc/")) {
+            String query = exchange.getRequestURI().getQuery();
+            String attributes;
+            if (query.contains("geometry=-88.95")) {
+                attributes = null;
+            } else if (query.contains("geometry=-60.0")) {
+                attributes = "error";
+            } else if (path.contains("cli_agr_cap_250k")) {
+                attributes = "{\"CLASS_A\":\"2\",\"SUBCLAS_A1\":\"S\",\"SUBCLAS_A2\":\" \"}";
+            } else if (path.contains("aafc_soc_drainage_fs")) {
+                attributes = "{\"DRAINAGE_CODE\":\"W\",\"DRAINAGE_PCNT\":69}";
+            } else if (path.contains("Risk_soil_erosion_integrated_2021")) {
+                attributes = "{\"ERI_1981_VAL\":14.464,\"ERI_1981_CLASS_EN\":\"Moderate\",\"ERI_2021_VAL\":12.467,"
+                        + "\"ERI_2021_CLASS_EN\":\"Moderate\",\"ERI_81_21_CHG_VAL\":-1.997,"
+                        + "\"ERI_81_21_CHG_CLASS_EN\":\"Decrease\"}";
+            } else if (path.contains("Soil_cover_days_2021")) {
+                attributes = "{\"SCD_2021_VAL\":287.4205,\"SCD_2021_CLASS_EN\":\"Moderate\"}";
+            } else {
+                attributes = null;
+            }
+            response = "error".equals(attributes)
+                    ? "{\"error\":{\"code\":400,\"message\":\"Invalid query\"}}"
+                    : "{\"objectIdFieldName\":\"OBJECTID\",\"fields\":[],\"features\":["
+                            + (attributes == null ? "" : "{\"attributes\":" + attributes + "}") + "]}";
+        } else if (path.equals("/geomet")) {
+            String query = exchange.getRequestURI().getQuery();
+            geoMetQueries.add(query);
+            if (query.contains("bbox=-0.0500")) {
+                response = "{\"type\":\"FeatureCollection\",\"features\":[]}";
+            } else {
+                String time = query.contains("time=2027-02") ? "2027-02-01T00:00:00Z"
+                        : query.contains("time=2027-05") ? "2027-05-01T00:00:00Z" : "2026-11-01T00:00:00Z";
+                double value = query.contains("ProbAbove") ? 61.25 : query.contains("ProbNear") ? 25.5 : 13.25;
+                response = "{\"type\":\"FeatureCollection\",\"layer\":\"x\",\"features\":[{\"type\":\"Feature\","
+                        + "\"geometry\":{\"type\":\"Point\",\"coordinates\":[-79.0,44.5]},\"properties\":{\"value\":"
+                        + value + ",\"class\":\"60 - 70%\",\"time\":\"" + time
+                        + "\",\"dim_reference_time\":\"2026-11-01T00:00:00Z\"}}]}";
+            }
+        } else if (path.equals("/statcan/getDataFromCubePidCoordAndLatestNPeriods")) {
+            if (!statCanUp.get()) {
+                status = 503;
+                response = "{\"message\":\"down\"}";
+            } else {
+                StringBuilder results = new StringBuilder();
+                for (JsonNode series : JSON.readTree(exchange.getRequestBody().readAllBytes())) {
+                    int productId = series.get("productId").asInt();
+                    String coordinate = series.get("coordinate").asString();
+                    String points = productId == 32100359
+                            ? "{\"refPer\":\"2025-01-01\",\"value\":11000.0,\"decimals\":0},"
+                                    + "{\"refPer\":\"2026-01-01\",\"value\":null,\"decimals\":0}"
+                            : "{\"refPer\":\"2026-09-01\",\"value\":250.0,\"decimals\":2}";
+                    if (!results.isEmpty()) {
+                        results.append(',');
+                    }
+                    results.append("{\"status\":\"SUCCESS\",\"object\":{\"responseStatusCode\":0,\"productId\":")
+                            .append(productId).append(",\"coordinate\":\"").append(coordinate)
+                            .append("\",\"vectorId\":1,\"vectorDataPoint\":[").append(points).append("]}}");
+                }
+                response = "[" + results + "]";
+            }
+        } else if (path.equals("/fields/field-1/crop-calendar")) {
+            cropCalendarQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + cropCalendarJson() + "}";
+        } else if (path.equals("/crop-calendar")) {
+            cropCalendarRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (cropCalendarRequestBody.get().contains("\"oats\"")) {
+                status = 422;
+                response = "{\"detail\":\"unknown crops: oats\"}";
+            } else {
+                response = "{" + cropCalendarJson() + "}";
+            }
+        } else if (path.equals("/fields/field-1/vegetation-history")) {
+            vegetationQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + vegetationHistoryJson() + "}";
+        } else if (path.equals("/vegetation-history")) {
+            vegetationRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + vegetationHistoryJson() + "}";
+        } else if (path.equals("/fields/field-1/drought-indicators")) {
+            droughtQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + droughtJson() + "}";
+        } else if (path.equals("/fields/no-credentials/drought-indicators")) {
+            status = 503;
+            response = "{\"detail\":\"Configure EARTHDATA_USERNAME and EARTHDATA_PASSWORD on the API host to fetch GRACE data\"}";
+        } else if (path.equals("/drought-indicators")) {
+            droughtRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + droughtJson() + "}";
+        } else if (path.equals("/fields/field-1/agro-weather")) {
+            agroWeatherQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + agroWeatherJson() + "}";
+        } else if (path.equals("/agro-weather")) {
+            agroWeatherRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + agroWeatherJson() + "}";
         } else if (path.equals("/fields/field-1/greenness")) {
             greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\"," + greennessJson() + "}";
@@ -816,6 +1317,19 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/missing")) {
             status = 404;
             response = "{\"detail\":\"Field not found\"}";
+        } else if (path.equals("/fields/field-2")) {
+            response = "{\"id\":\"field-2\",\"hectares\":5.0,\"acres\":12.4}";
+        } else if (path.equals("/fields/field-2/crop-calendar")) {
+            response = "{\"id\":\"field-2\",\"location\":{\"lat\":46.1,\"lon\":-77.3},\"crops\":[]}";
+        } else if (path.startsWith("/fields/field-2/")) {
+            status = 502;
+            response = "{\"detail\":\"NASA POWER daily weather is unavailable or invalid\"}";
+        } else if (path.equals("/fields/field-1/summary")) {
+            // A centre away from the other tests' points, so the seasonal outlook cache they rely on is not touched
+            response = "{\"id\":\"field-1\",\"field\":{\"centroid\":{\"lat\":45.2,\"lon\":-78.1},\"areaHa\":12.3},"
+                    + "\"weatherSource\":\"daymet\",\"period\":{\"start\":\"20150101\",\"end\":\"20241231\"},"
+                    + "\"climate\":{\"gdd_annual_median\":2350.0,\"chu_available_median\":2900.0},"
+                    + "\"terrain\":{\"erosion_rating\":\"moderate\"},\"source\":[]}";
         } else if (path.equals("/field-coverage")) {
             response = "{\"region\":\"Orillia\",\"status\":\"sample\","
                     + "\"fields\":300,\"fieldCount\":300}";
@@ -837,6 +1351,102 @@ class BackendApiIntegrationTest {
             response = "{\"detail\":\"Not found\"}";
         }
         respond(exchange, status, response);
+    }
+
+    /**
+     * Creates a representative crop calendar body, without the surrounding braces.
+     *
+     * @return crop calendar JSON members
+     */
+    private static String cropCalendarJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"cell\":{\"lat\":44.25,\"lon\":-79.25,\"sizeDeg\":0.5},\"system\":\"rainfed\","
+                + "\"crops\":[{\"crop\":\"corn\",\"label\":\"Corn\",\"plantingDay\":121,\"plantingDate\":\"05-01\","
+                + "\"maturityDay\":283,\"maturityDate\":\"10-10\",\"growingSeasonDays\":162,\"offSeasonDays\":203,"
+                + "\"crossesNewYear\":false,\"dataSource\":\"MIRCA2000\"},"
+                + "{\"crop\":\"winter_wheat\",\"label\":\"Winter wheat\",\"plantingDay\":284,\"plantingDate\":\"10-11\","
+                + "\"maturityDay\":208,\"maturityDate\":\"07-27\",\"growingSeasonDays\":289,\"offSeasonDays\":76,"
+                + "\"crossesNewYear\":true,\"dataSource\":\"SAGE\"},"
+                + "{\"crop\":\"cassava\",\"label\":\"Cassava\",\"plantingDay\":null,\"plantingDate\":null,"
+                + "\"maturityDay\":null,\"maturityDate\":null,\"growingSeasonDays\":null,\"offSeasonDays\":null,"
+                + "\"crossesNewYear\":null,\"dataSource\":null}],"
+                + "\"source\":{\"name\":\"GGCMI Phase 3 crop calendar\",\"url\":\"https://zenodo.org/records/5062513\","
+                + "\"doi\":\"10.5281/zenodo.5062513\",\"version\":\"1.01\",\"resolutionDeg\":0.5,"
+                + "\"license\":\"CC BY 4.0\",\"citation\":\"Jaegermeyr et al. (2021)\"},\"note\":\"Usual dates\"";
+    }
+
+    /**
+     * Creates a representative vegetation history body, without the surrounding braces.
+     *
+     * @return vegetation history JSON members
+     */
+    private static String vegetationHistoryJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"ndvi\":{\"period\":{\"start\":\"2024-01-01\",\"end\":\"2026-11-14\"},\"lowCoverThreshold\":0.3,"
+                + "\"observations\":[{\"date\":\"2024-01-01\",\"ndvi\":null,\"snow\":true,\"usableShare\":0.0},"
+                + "{\"date\":\"2024-07-11\",\"ndvi\":0.804,\"snow\":false,\"usableShare\":1.0}],"
+                + "\"byYear\":[{\"year\":2024,\"composites\":20,\"peakNdvi\":0.824,\"peakDate\":\"2024-07-27\","
+                + "\"greenUpDate\":\"2024-06-09\",\"brownDownDate\":\"2024-09-29\",\"greenDays\":128,\"lowCoverDays\":96},"
+                + "{\"year\":2025,\"composites\":11,\"peakNdvi\":null,\"peakDate\":null,\"greenUpDate\":null,"
+                + "\"brownDownDate\":null,\"greenDays\":null,\"lowCoverDays\":112}],"
+                + "\"calendar\":[{\"startDay\":1,\"startDate\":\"01-01\",\"medianNdvi\":null,\"lowCoverShare\":1.0,"
+                + "\"snowShare\":1.0,\"years\":3}],"
+                + "\"lowCoverWindows\":[{\"startDate\":\"12-03\",\"endDate\":\"05-08\",\"days\":157}],"
+                + "\"typical\":{\"peakNdvi\":0.823,\"greenDays\":112.0,\"lowCoverDays\":128.0}},"
+                + "\"yearly\":[{\"year\":2001,\"nppKgCPerM2\":0.557,\"etMm\":527.7,\"petMm\":1024.8,\"etShareOfPet\":0.51}],"
+                + "\"yearlySummary\":{\"nppMedianKgCPerM2\":0.571,\"nppTrendKgCPerM2PerYear\":0.00016,"
+                + "\"etMedianMm\":560.6,\"petMedianMm\":990.9,\"etShareOfPetMedian\":0.57},"
+                + "\"filesChecked\":125,\"filesUnreadable\":0,"
+                + "\"source\":[{\"name\":\"NASA MODIS/Terra Vegetation Indices 16-Day (MOD13Q1 v6.1)\","
+                + "\"collection\":\"modis-13Q1-061\",\"resolutionM\":250,\"from\":2000}],"
+                + "\"provider\":{\"name\":\"Microsoft Planetary Computer\",\"url\":\"https://example.test/pc\"},"
+                + "\"note\":\"MODIS pixels are 250 m\"";
+    }
+
+    /**
+     * Creates a representative drought indicators body, without the surrounding braces.
+     *
+     * @return drought indicators JSON members
+     */
+    private static String droughtJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"cell\":{\"lat\":44.375,\"lon\":-79.125,\"sizeDeg\":0.25},"
+                + "\"latest\":{\"weekStart\":\"2026-08-31\",\"ageDays\":75,"
+                + "\"groundwater\":{\"percentile\":8.5,\"condition\":\"severely dry\"},"
+                + "\"rootZone\":{\"percentile\":40.0,\"condition\":\"normal\"},"
+                + "\"surface\":{\"percentile\":null,\"condition\":null}},"
+                + "\"weekly\":[{\"weekStart\":\"2026-08-24\",\"groundwaterPercentile\":9.0,\"rootZonePercentile\":96.1,"
+                + "\"surfacePercentile\":94.6}],"
+                + "\"sameWeekByYear\":[{\"weekStart\":\"2025-09-01\",\"groundwaterPercentile\":54.1,"
+                + "\"rootZonePercentile\":56.1,\"surfacePercentile\":null}],"
+                + "\"conditions\":[{\"upToPercentile\":2,\"condition\":\"exceptionally dry\"}],\"baseline\":\"1948-2012\","
+                + "\"source\":{\"name\":\"NASA GRACE and GRACE-FO Data Assimilation drought indicators\","
+                + "\"product\":\"GRACEDADM_CLSM025GL_7D\",\"url\":\"https://example.test/grace\",\"resolutionDeg\":0.25,"
+                + "\"frequency\":\"weekly\",\"institution\":\"NASA Goddard Space Flight Center\"},"
+                + "\"note\":\"Percentiles compare each layer\"";
+    }
+
+    /**
+     * Creates a representative agro-weather body, without the surrounding braces.
+     *
+     * @return agro-weather JSON members
+     */
+    private static String agroWeatherJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938,\"elevationM\":241.1},"
+                + "\"period\":{\"start\":\"2006-01-01\",\"end\":\"2026-11-14\"},\"season\":{\"months\":[5,6,7,8,9]},"
+                + "\"soilWetness\":{\"latest\":{\"date\":\"2026-11-11\",\"rootZone\":0.21,\"surface\":0.35,"
+                + "\"rootZone30DayMean\":0.207,\"percentile\":0,\"comparedYears\":20,\"status\":\"dry\"},"
+                + "\"monthly\":[{\"month\":1,\"rootZone\":0.52,\"surface\":0.6}],"
+                + "\"seasonPercentiles\":{\"rootZone\":{\"p10\":0.428,\"p50\":0.455,\"p90\":0.497,\"years\":21},"
+                + "\"surface\":null}},"
+                + "\"et0\":{\"method\":\"FAO-56 Penman-Monteith\",\"seasonPercentilesMm\":{\"p10\":489.3,\"p50\":537.9,"
+                + "\"p90\":570.7,\"years\":21},\"monthlyMmPerDay\":[{\"month\":1,\"et0\":0.4}]},"
+                + "\"seasonMeans\":{\"solarMjM2Day\":19.5,\"windMs\":1.36,\"humidityPct\":68.6},"
+                + "\"seasonByYear\":[{\"year\":2025,\"rootZone\":0.424,\"surface\":0.406,\"et0Mm\":null,"
+                + "\"solarMjM2Day\":19.52,\"windMs\":1.35,\"humidityPct\":65.4}],"
+                + "\"units\":{\"et0Mm\":\"mm per season\"},"
+                + "\"source\":{\"name\":\"NASA POWER (MERRA-2, CERES)\",\"url\":\"https://example.test/power\","
+                + "\"resolutionKm\":50,\"variables\":[\"GWETROOT\"]},\"note\":\"Regional values\"";
     }
 
     /**

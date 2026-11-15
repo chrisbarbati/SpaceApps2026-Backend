@@ -15,13 +15,15 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * Environmental summary returned by the data backend's {@code POST /field-summary}
- * endpoint.
+ * and {@code GET /fields/{field_id}/summary} endpoints.
  *
  * <p>The payload combines field geometry, the sampled weather cell, climate and
  * water-balance indicators, frost dates, monthly climatology, data coverage,
  * terrain statistics and source metadata. The {@code terrain} block is
  * {@code null} when the terrain provider failed while weather succeeded.</p>
  *
+ * @param id         the stored field's identifier for {@code GET /fields/{field_id}/summary}, or
+ *                   {@code null} for an outline posted to {@code POST /field-summary}
  * @param field      the field centroid and area
  * @param weatherSource the weather dataset used, {@code daymet} or {@code power}
  * @param weatherCell the weather sampling coordinate
@@ -31,12 +33,14 @@ import tools.jackson.databind.JsonNode;
  * @param water      water-balance indicators
  * @param frost      frost dates and frost-free season
  * @param monthly    monthly climatology, one entry per calendar month
+ * @param yearly     year-by-year indicators and their spread across the period
  * @param coverage   data coverage and cleaning counts
  * @param terrain    terrain statistics, or {@code null} on terrain failure
  * @param layers     per-layer status
  * @param source     source and provenance metadata
  */
 public record FieldSummaryResponse(
+        @JsonInclude(JsonInclude.Include.NON_NULL) String id,
         FieldInfo field,
         @Schema(allowableValues = {"daymet", "power"}) String weatherSource,
         WeatherCell weatherCell,
@@ -46,10 +50,48 @@ public record FieldSummaryResponse(
         WaterInfo water,
         FrostInfo frost,
         List<MonthlyRow> monthly,
+        YearlyInfo yearly,
         CoverageInfo coverage,
         TerrainInfo terrain,
         LayersInfo layers,
         List<SourceInfo> source) {
+
+    /**
+     * Creates a summary for a posted outline, which has no field identifier.
+     *
+     * @param field         the field centroid and area
+     * @param weatherSource the weather dataset used
+     * @param weatherCell   the weather sampling coordinate
+     * @param period        the analysis period
+     * @param season        the growing-season definition
+     * @param climate       climate indicators and trends
+     * @param water         water-balance indicators
+     * @param frost         frost dates and frost-free season
+     * @param monthly       monthly climatology
+     * @param yearly        year-by-year indicators
+     * @param coverage      data coverage and cleaning counts
+     * @param terrain       terrain statistics, or {@code null}
+     * @param layers        per-layer status
+     * @param source        source and provenance metadata
+     */
+    public FieldSummaryResponse(
+            FieldInfo field,
+            String weatherSource,
+            WeatherCell weatherCell,
+            PeriodInfo period,
+            SeasonInfo season,
+            ClimateInfo climate,
+            WaterInfo water,
+            FrostInfo frost,
+            List<MonthlyRow> monthly,
+            YearlyInfo yearly,
+            CoverageInfo coverage,
+            TerrainInfo terrain,
+            LayersInfo layers,
+            List<SourceInfo> source) {
+        this(null, field, weatherSource, weatherCell, period, season, climate, water, frost, monthly, yearly,
+                coverage, terrain, layers, source);
+    }
 
     /**
      * Field centroid and estimated area.
@@ -327,5 +369,66 @@ public record FieldSummaryResponse(
         public void setExtra(String name, JsonNode value) {
             this.extra.put(name, value);
         }
+    }
+
+    /**
+     * Year-by-year indicators, for judging how reliably a field meets a crop's
+     * needs rather than relying on the median alone.
+     *
+     * @param years       one row per year; season values belong to the season's start year
+     * @param percentiles spread of each indicator across valid years, keyed by the indicator's
+     *                    name as it appears in a year row (for example {@code chu_available});
+     *                    an entry is {@code null} when no year qualifies
+     */
+    public record YearlyInfo(List<YearRow> years, Map<String, Percentiles> percentiles) {
+    }
+
+    /**
+     * Indicators for one year. A value is {@code null} when the year lacks
+     * enough valid days.
+     *
+     * @param year             calendar year, or the season's start year for season values
+     * @param chuAvailable     Ontario crop heat units available
+     * @param gddSeason        growing-degree days in the growing season
+     * @param gddAnnual        growing-degree days in the calendar year
+     * @param seasonPrecipMm   growing-season precipitation in millimetres
+     * @param precipMm         annual precipitation in millimetres
+     * @param seasonEt0Mm      growing-season reference evapotranspiration in millimetres
+     * @param waterDeficitMm   growing-season water deficit in millimetres
+     * @param waterStressIndex water deficit as a share of evapotranspiration, 0 to 1
+     * @param frostFreeDays    longest run of frost-free days
+     * @param frostDays        days with a minimum at or below 0 C
+     * @param heatDays30       days with a maximum at or above 30 C
+     * @param drySpellDays     longest dry spell in days
+     * @param heavyRainDays    heavy-rain days
+     * @param max1dayPrecipMm  largest one-day precipitation in millimetres
+     */
+    public record YearRow(
+            Integer year,
+            @JsonProperty("chu_available") Double chuAvailable,
+            @JsonProperty("gdd_season") Double gddSeason,
+            @JsonProperty("gdd_annual") Double gddAnnual,
+            @JsonProperty("season_precip_mm") Double seasonPrecipMm,
+            @JsonProperty("precip_mm") Double precipMm,
+            @JsonProperty("season_et0_mm") Double seasonEt0Mm,
+            @JsonProperty("water_deficit_mm") Double waterDeficitMm,
+            @JsonProperty("water_stress_index") Double waterStressIndex,
+            @JsonProperty("frost_free_days") Double frostFreeDays,
+            @JsonProperty("frost_days") Double frostDays,
+            @JsonProperty("heat_days_30") Double heatDays30,
+            @JsonProperty("dry_spell_days") Double drySpellDays,
+            @JsonProperty("heavy_rain_days") Double heavyRainDays,
+            @JsonProperty("max_1day_precip_mm") Double max1dayPrecipMm) {
+    }
+
+    /**
+     * Spread of one indicator across the valid years.
+     *
+     * @param p10   value exceeded in nine years out of ten
+     * @param p50   median
+     * @param p90   value exceeded in one year out of ten
+     * @param years number of valid years used
+     */
+    public record Percentiles(Double p10, Double p50, Double p90, Integer years) {
     }
 }

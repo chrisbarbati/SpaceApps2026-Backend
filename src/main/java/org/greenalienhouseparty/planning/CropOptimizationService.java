@@ -1,5 +1,6 @@
-package org.greenalienhouseparty.service;
+package org.greenalienhouseparty.planning;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 
@@ -7,6 +8,7 @@ import org.greenalienhouseparty.dto.CropCatalogResponse;
 import org.greenalienhouseparty.dto.CropOptimizationRequest;
 import org.greenalienhouseparty.dto.CropOptimizationResponse;
 import org.greenalienhouseparty.exception.CropOptimizationValidationException;
+import org.greenalienhouseparty.planning.model.Crop;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,49 +21,56 @@ public class CropOptimizationService {
 
     private static final Logger log = LoggerFactory.getLogger(CropOptimizationService.class);
 
-    private static final String PLACEHOLDER_NOTE = "Temporary random plan only; it is not optimized for soil health, "
-            + "weather, yield, income, or crop reliability, and may repeat crops. "
-            + "Review any planting decision with local experts.";
+    private static final String EXAMPLE_DATA_NOTE = "The tolerated soil pH range comes from FAO ECOCROP. Nitrogen, "
+            + "residue, cover, net margin and disease figures are illustrative examples, not sourced regional data. "
+            + "Use them to explore how crops compare, and confirm real values with local experts.";
 
-    private final CropCatalog catalog;
+    private static final String SOURCED_DATA_NOTE = "Crop figures are typical values; confirm them with local experts.";
+
+    private final CropRepository crops;
 
     private final CropRotationPlanner planner;
 
     /**
      * Creates the crop optimization service.
      *
-     * @param catalog canonical set of currently supported crops
+     * @param crops   catalog of supported crops and their attributes
      * @param planner implementation that creates the future crop plan
      */
-    public CropOptimizationService(CropCatalog catalog, CropRotationPlanner planner) {
+    public CropOptimizationService(CropRepository crops, CropRotationPlanner planner) {
         log.trace("Entering CropOptimizationService constructor");
-        this.catalog = catalog;
+        this.crops = crops;
         this.planner = planner;
         log.debug("Initialized crop optimization service");
         log.trace("Exiting CropOptimizationService constructor");
     }
 
     /**
-     * Returns the fixed crop list for current-crop and growable-crop controls.
+     * Returns the supported crops with the attributes the planner uses, for
+     * current-crop and growable-crop controls and for display.
      *
-     * @return catalog response containing supported display names
+     * @return catalog response containing every supported crop
      */
     public CropCatalogResponse catalog() {
         log.trace("Entering catalog()");
         log.debug("Loading supported crop choices");
         try {
-            return new CropCatalogResponse(catalog.crops());
+            boolean example = crops.exampleData();
+            return new CropCatalogResponse(crops.findAll(), example, example ? EXAMPLE_DATA_NOTE : SOURCED_DATA_NOTE);
         } finally {
             log.trace("Exiting catalog()");
         }
     }
 
     /**
-     * Validates all submitted field contexts and creates a temporary plan for
-     * each field.
+     * Validates all submitted field contexts and creates a plan for each field
+     * with the active planner.
+     *
+     * <p>Crops may be submitted by id or display name; planners always receive
+     * display names.</p>
      *
      * @param request batch of selected fields and farmer crop choices
-     * @return five-year placeholder plans, one for each submitted field
+     * @return five-year plans, one for each submitted field
      * @throws CropOptimizationValidationException when request data is incomplete
      *         or contains an unsupported crop
      */
@@ -71,13 +80,14 @@ public class CropOptimizationService {
         try {
             validate(request);
             List<CropOptimizationResponse.FieldPlan> plans = request.fields().stream()
+                    .map(this::withCropNames)
                     .map(planner::plan)
                     .toList();
             return new CropOptimizationResponse(
                     plans,
-                    "random-placeholder",
-                    true,
-                    PLACEHOLDER_NOTE);
+                    planner.id(),
+                    planner.temporary(),
+                    planner.disclaimer());
         } finally {
             log.trace("Exiting optimize()");
         }
@@ -117,7 +127,8 @@ public class CropOptimizationService {
                     throw new CropOptimizationValidationException(
                             prefix + ".geometry must be a GeoJSON Polygon or MultiPolygon");
                 }
-                if (!catalog.supports(field.currentCrop())) {
+                if (field.currentCrop() == null || field.currentCrop().isBlank()
+                        || (crops.find(field.currentCrop()).isEmpty() && !"random-placeholder".equals(planner.id()))) {
                     throw new CropOptimizationValidationException(prefix + ".currentCrop is not supported");
                 }
                 if (field.growableCrops() == null || field.growableCrops().isEmpty()) {
@@ -125,10 +136,9 @@ public class CropOptimizationService {
                 }
                 var distinct = new HashSet<String>();
                 for (String crop : field.growableCrops()) {
-                    if (!catalog.supports(crop)) {
-                        throw new CropOptimizationValidationException(prefix + ".growableCrops contains an unsupported crop");
-                    }
-                    if (!distinct.add(crop)) {
+                    String cropId = crops.find(crop).map(Crop::id).orElseThrow(() ->
+                            new CropOptimizationValidationException(prefix + ".growableCrops contains an unsupported crop"));
+                    if (!distinct.add(cropId)) {
                         throw new CropOptimizationValidationException(prefix + ".growableCrops must not contain duplicates");
                     }
                 }
@@ -136,5 +146,26 @@ public class CropOptimizationService {
         } finally {
             log.trace("Exiting validate()");
         }
+    }
+
+    /**
+     * Preserves uncatalogued current-crop answers for temporary demos and resolves known crops.
+     * Rewrites a validated field's crops as catalog display names, so a
+     * request may use ids or names and planners see one form.
+     *
+     * @param field validated field input
+     * @return the same field with crops given as display names
+     */
+    private CropOptimizationRequest.FieldRequest withCropNames(CropOptimizationRequest.FieldRequest field) {
+        List<String> growable = new ArrayList<>(field.growableCrops().size());
+        for (String crop : field.growableCrops()) {
+            growable.add(crops.find(crop).orElseThrow().name());
+        }
+        return new CropOptimizationRequest.FieldRequest(
+                field.fieldId(),
+                field.geometry(),
+                crops.find(field.currentCrop()).map(Crop::name).orElse(field.currentCrop().trim()),
+                growable,
+                field.readyDate());
     }
 }
