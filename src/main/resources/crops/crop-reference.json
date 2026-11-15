@@ -1,0 +1,304 @@
+{
+  "sources": {
+    "requirements": {
+      "name": "FAO ECOCROP",
+      "url": "https://gaez.fao.org/pages/ecocrop",
+      "note": "Crop environmental requirements. pH, temperature and rainfall are given as an optimal range and an absolute (tolerated) range; cycle is days from planting to harvest. Extracted 2026-11-14 from the public EcoCrop_DB.csv copy at github.com/OpenCLIM/ecocrop."
+    },
+    "estimates": {
+      "name": "Illustrative estimates",
+      "url": null,
+      "note": "Nitrogen fixed and demanded, residue score, months of cover, net margin and disease susceptibility are placeholders chosen to be plausible for southern Ontario. They are not sourced and need agronomist review."
+    }
+  },
+  "crops": [
+    {
+      "id": "corn",
+      "name": "Corn",
+      "scientificName": "Zea mays",
+      "family": "Poaceae",
+      "requirements": {
+        "phMin": 4.5,
+        "phMax": 8.5,
+        "phOptimalMin": 5.0,
+        "phOptimalMax": 7.0,
+        "tempOptimalMinC": 18,
+        "tempOptimalMaxC": 33,
+        "tempMinC": 10,
+        "tempMaxC": 47,
+        "rainOptimalMinMm": 600,
+        "rainOptimalMaxMm": 1200,
+        "rainMinMm": 400,
+        "rainMaxMm": 1800,
+        "cycleMinDays": 65,
+        "cycleMaxDays": 365,
+        "killingTempC": null,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 170,
+        "residueScore": 0.8,
+        "coverMonths": 5,
+        "netMarginPerHa": 450,
+        "diseaseSusceptibility": 0.5
+      }
+    },
+    {
+      "id": "soybeans",
+      "name": "Soybeans",
+      "scientificName": "Glycine max",
+      "family": "Fabaceae",
+      "requirements": {
+        "phMin": 4.5,
+        "phMax": 8.4,
+        "phOptimalMin": 5.5,
+        "phOptimalMax": 6.5,
+        "tempOptimalMinC": 20,
+        "tempOptimalMaxC": 33,
+        "tempMinC": 10,
+        "tempMaxC": 38,
+        "rainOptimalMinMm": 600,
+        "rainOptimalMaxMm": 1500,
+        "rainMinMm": 450,
+        "rainMaxMm": 1800,
+        "cycleMinDays": 75,
+        "cycleMaxDays": 180,
+        "killingTempC": null,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 120,
+        "nDemandKgHa": 100,
+        "residueScore": 0.3,
+        "coverMonths": 4,
+        "netMarginPerHa": 400,
+        "diseaseSusceptibility": 0.6
+      }
+    },
+    {
+      "id": "wheat",
+      "name": "Wheat",
+      "scientificName": "Triticum aestivum",
+      "family": "Poaceae",
+      "requirements": {
+        "phMin": 5.5,
+        "phMax": 8.5,
+        "phOptimalMin": 6.0,
+        "phOptimalMax": 7.0,
+        "tempOptimalMinC": 15,
+        "tempOptimalMaxC": 23,
+        "tempMinC": 5,
+        "tempMaxC": 27,
+        "rainOptimalMinMm": 750,
+        "rainOptimalMaxMm": 900,
+        "rainMinMm": 300,
+        "rainMaxMm": 1600,
+        "cycleMinDays": 90,
+        "cycleMaxDays": 250,
+        "killingTempC": 0,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 110,
+        "residueScore": 0.6,
+        "coverMonths": 9,
+        "netMarginPerHa": 250,
+        "diseaseSusceptibility": 0.5
+      }
+    },
+    {
+      "id": "barley",
+      "name": "Barley",
+      "scientificName": "Hordeum vulgare",
+      "family": "Poaceae",
+      "requirements": {
+        "phMin": 6.0,
+        "phMax": 8.0,
+        "phOptimalMin": 6.5,
+        "phOptimalMax": 7.5,
+        "tempOptimalMinC": 15,
+        "tempOptimalMaxC": 20,
+        "tempMinC": 2,
+        "tempMaxC": 40,
+        "rainOptimalMinMm": 500,
+        "rainOptimalMaxMm": 1000,
+        "rainMinMm": 200,
+        "rainMaxMm": 2000,
+        "cycleMinDays": 90,
+        "cycleMaxDays": 240,
+        "killingTempC": 0,
+        "rootingDepth": "deep (>150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 90,
+        "residueScore": 0.5,
+        "coverMonths": 4,
+        "netMarginPerHa": 180,
+        "diseaseSusceptibility": 0.5
+      }
+    },
+    {
+      "id": "oats",
+      "name": "Oats",
+      "scientificName": "Avena sativa",
+      "family": "Poaceae",
+      "requirements": {
+        "phMin": 4.5,
+        "phMax": 7.5,
+        "phOptimalMin": 5.0,
+        "phOptimalMax": 6.0,
+        "tempOptimalMinC": 16,
+        "tempOptimalMaxC": 20,
+        "tempMinC": 5,
+        "tempMaxC": 30,
+        "rainOptimalMinMm": 600,
+        "rainOptimalMaxMm": 1000,
+        "rainMinMm": 250,
+        "rainMaxMm": 1500,
+        "cycleMinDays": 110,
+        "cycleMaxDays": 270,
+        "killingTempC": -1,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 80,
+        "residueScore": 0.5,
+        "coverMonths": 4,
+        "netMarginPerHa": 150,
+        "diseaseSusceptibility": 0.3
+      }
+    },
+    {
+      "id": "canola",
+      "name": "Canola",
+      "scientificName": "Brassica napus",
+      "family": "Brassicaceae",
+      "requirements": {
+        "phMin": 5.5,
+        "phMax": 8.0,
+        "phOptimalMin": 6.5,
+        "phOptimalMax": 7.6,
+        "tempOptimalMinC": 15,
+        "tempOptimalMaxC": 25,
+        "tempMinC": 5,
+        "tempMaxC": 41,
+        "rainOptimalMinMm": 500,
+        "rainOptimalMaxMm": 1000,
+        "rainMinMm": 400,
+        "rainMaxMm": 2800,
+        "cycleMinDays": 85,
+        "cycleMaxDays": 340,
+        "killingTempC": -6,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 130,
+        "residueScore": 0.4,
+        "coverMonths": 4,
+        "netMarginPerHa": 350,
+        "diseaseSusceptibility": 0.8
+      }
+    },
+    {
+      "id": "potatoes",
+      "name": "Potatoes",
+      "scientificName": "Solanum tuberosum",
+      "family": "Solanaceae",
+      "requirements": {
+        "phMin": 4.2,
+        "phMax": 8.5,
+        "phOptimalMin": 5.0,
+        "phOptimalMax": 6.2,
+        "tempOptimalMinC": 15,
+        "tempOptimalMaxC": 25,
+        "tempMinC": 7,
+        "tempMaxC": 30,
+        "rainOptimalMinMm": 500,
+        "rainOptimalMaxMm": 800,
+        "rainMinMm": 250,
+        "rainMaxMm": 2000,
+        "cycleMinDays": 90,
+        "cycleMaxDays": 160,
+        "killingTempC": 0,
+        "rootingDepth": "medium (50-150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 180,
+        "residueScore": 0.1,
+        "coverMonths": 4,
+        "netMarginPerHa": 1500,
+        "diseaseSusceptibility": 0.9
+      }
+    },
+    {
+      "id": "alfalfa",
+      "name": "Alfalfa",
+      "scientificName": "Medicago sativa",
+      "family": "Fabaceae",
+      "requirements": {
+        "phMin": 4.3,
+        "phMax": 8.7,
+        "phOptimalMin": 6.5,
+        "phOptimalMax": 7.5,
+        "tempOptimalMinC": 21,
+        "tempOptimalMaxC": 27,
+        "tempMinC": 5,
+        "tempMaxC": 45,
+        "rainOptimalMinMm": 600,
+        "rainOptimalMaxMm": 1200,
+        "rainMinMm": 350,
+        "rainMaxMm": 2700,
+        "cycleMinDays": 100,
+        "cycleMaxDays": 210,
+        "killingTempC": 0,
+        "rootingDepth": "deep (>150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 150,
+        "nDemandKgHa": 0,
+        "residueScore": 0.7,
+        "coverMonths": 12,
+        "netMarginPerHa": 300,
+        "diseaseSusceptibility": 0.3
+      }
+    },
+    {
+      "id": "grapes",
+      "name": "Grapes",
+      "scientificName": "Vitis vinifera",
+      "family": "Vitaceae",
+      "requirements": {
+        "phMin": 4.5,
+        "phMax": 8.5,
+        "phOptimalMin": 5.5,
+        "phOptimalMax": 7.5,
+        "tempOptimalMinC": 18,
+        "tempOptimalMaxC": 30,
+        "tempMinC": 10,
+        "tempMaxC": 38,
+        "rainOptimalMinMm": 700,
+        "rainOptimalMaxMm": 850,
+        "rainMinMm": 400,
+        "rainMaxMm": 1200,
+        "cycleMinDays": 160,
+        "cycleMaxDays": 270,
+        "killingTempC": -3,
+        "rootingDepth": "deep (>150 cm)"
+      },
+      "estimates": {
+        "nFixKgHa": 0,
+        "nDemandKgHa": 50,
+        "residueScore": 0.2,
+        "coverMonths": 12,
+        "netMarginPerHa": 3000,
+        "diseaseSusceptibility": 0.4
+      }
+    }
+  ]
+}

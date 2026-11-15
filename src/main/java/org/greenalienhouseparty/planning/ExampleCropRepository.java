@@ -7,10 +7,10 @@ import java.util.Optional;
 import org.greenalienhouseparty.planning.model.Crop;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Repository;
 
 /**
- * Fixed crop list with <strong>example values</strong>.
+ * Fixed crop list with <strong>example values</strong>. No longer a Spring bean:
+ * {@link ReferenceCropRepository} serves the application, and this class remains for tests.
  *
  * <p>The Python data backend describes fields (soil, terrain, weather, crop
  * history) but nothing about crops themselves, so every agronomic and economic
@@ -35,7 +35,6 @@ import org.springframework.stereotype.Repository;
  *       moisture and NDVI are available but the planner does not read them yet.</li>
  * </ul>
  */
-@Repository
 public class ExampleCropRepository implements CropRepository {
 
     private static final Logger log = LoggerFactory.getLogger(ExampleCropRepository.class);

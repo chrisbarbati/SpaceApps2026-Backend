@@ -278,6 +278,24 @@ class BackendApiIntegrationTest {
     }
 
     /**
+     * Verifies crop reference data is served with its requirements, estimates
+     * and sources, and is listed in the generated OpenAPI document.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsCropReference() throws Exception {
+        JsonNode reference = json(get("/crops/reference"));
+        assertEquals("FAO ECOCROP", reference.get("sources").get("requirements").get("name").asString());
+        assertEquals("Zea mays", reference.get("crops").get(0).get("scientificName").asString());
+        assertEquals(4.5, reference.get("crops").get(0).get("requirements").get("phMin").asDouble());
+        assertEquals(170.0, reference.get("crops").get(0).get("estimates").get("nDemandKgHa").asDouble());
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/crops/reference"));
+    }
+
+    /**
      * Verifies agro-weather is re-exposed for a stored field and for an
      * outline, passing the optional years through and keeping nulls.
      *

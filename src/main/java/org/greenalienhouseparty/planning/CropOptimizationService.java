@@ -21,8 +21,9 @@ public class CropOptimizationService {
 
     private static final Logger log = LoggerFactory.getLogger(CropOptimizationService.class);
 
-    private static final String EXAMPLE_DATA_NOTE = "Crop figures are illustrative examples, not sourced regional "
-            + "data. Use them to explore how crops compare, and confirm real values with local experts.";
+    private static final String EXAMPLE_DATA_NOTE = "The tolerated soil pH range comes from FAO ECOCROP. Nitrogen, "
+            + "residue, cover, net margin and disease figures are illustrative examples, not sourced regional data. "
+            + "Use them to explore how crops compare, and confirm real values with local experts.";
 
     private static final String SOURCED_DATA_NOTE = "Crop figures are typical values; confirm them with local experts.";
 
