@@ -137,6 +137,23 @@ class CropOptimizationServiceUnitTest {
     }
 
     /**
+     * Preserves every nonblank farmer answer for the random demo, including pasture and unknown crops.
+     *
+     * @throws Exception if the geometry fixture cannot be parsed
+     */
+    @Test
+    void randomDemoPreservesUncataloguedCurrentCrops() throws Exception {
+        var demo = new CropOptimizationService(crops, new RandomCropRotationPlanner());
+        for (String answer : List.of("Pasture", "Not sure", "Nothing planted", "Mixed hay")) {
+            var input = new CropOptimizationRequest.FieldRequest("field-1", field("field-1", List.of()).geometry(),
+                    answer, List.of("Corn", "Soybeans", "Wheat"), LocalDate.of(2027, 4, 1));
+            var result = demo.optimize(new CropOptimizationRequest(List.of(input)));
+            assertEquals(answer, result.plans().getFirst().currentCrop());
+            assertEquals(3, result.plans().getFirst().alternatives().size());
+        }
+    }
+
+    /**
      * Builds a field input with a polygon and a known current crop.
      *
      * @param id           field identifier

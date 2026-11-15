@@ -127,7 +127,8 @@ public class CropOptimizationService {
                     throw new CropOptimizationValidationException(
                             prefix + ".geometry must be a GeoJSON Polygon or MultiPolygon");
                 }
-                if (crops.find(field.currentCrop()).isEmpty()) {
+                if (field.currentCrop() == null || field.currentCrop().isBlank()
+                        || (crops.find(field.currentCrop()).isEmpty() && !"random-placeholder".equals(planner.id()))) {
                     throw new CropOptimizationValidationException(prefix + ".currentCrop is not supported");
                 }
                 if (field.growableCrops() == null || field.growableCrops().isEmpty()) {
@@ -148,6 +149,7 @@ public class CropOptimizationService {
     }
 
     /**
+     * Preserves uncatalogued current-crop answers for temporary demos and resolves known crops.
      * Rewrites a validated field's crops as catalog display names, so a
      * request may use ids or names and planners see one form.
      *
@@ -162,7 +164,7 @@ public class CropOptimizationService {
         return new CropOptimizationRequest.FieldRequest(
                 field.fieldId(),
                 field.geometry(),
-                crops.find(field.currentCrop()).orElseThrow().name(),
+                crops.find(field.currentCrop()).map(Crop::name).orElse(field.currentCrop().trim()),
                 growable,
                 field.readyDate());
     }

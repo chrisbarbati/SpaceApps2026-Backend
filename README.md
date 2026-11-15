@@ -24,3 +24,17 @@ Existing crop-history inference remains separate.
 Python must provide `/fields/{field_id}/season` on the existing `data.backend.url`.
 No new application property is required. Service checks are in
 `FieldSeasonServiceUnitTest`.
+
+## Random rotation comparison demo
+
+With `crop.planner.strategy=random`, `POST /crop-optimization` accepts any nonblank
+`currentCrop` answer, including `Pasture`, `Not sure`, `Nothing planted` and custom
+names. Known crop IDs are still resolved to catalog display names. Growable crops
+remain validated against `GET /crops`.
+
+Each field includes `alternatives`: three distinct five-year sequences with titles,
+summaries, hypothetical benefits, tradeoffs and per-year `rationale`. A one-crop
+pool can only produce one distinct sequence; the frontend uses the full catalog
+and always receives three. The existing `years` property mirrors the first option
+for consumers that expect one sequence. Numeric soil and income scores remain absent.
+Explanations are explicitly demo content and do not establish field suitability.

@@ -66,6 +66,29 @@ class RandomCropRotationPlannerUnitTest {
     }
 
     /**
+     * Checks uniqueness and complete explanations across many random seeds, including a two-crop pool.
+     *
+     * @throws Exception if the geometry fixture cannot be parsed
+     */
+    @Test
+    void producesThreeDifferentExplainedRotations() throws Exception {
+        for (var choices : List.of(List.of("Soybeans", "Wheat"), List.of("Corn", "Soybeans", "Wheat", "Oats"))) {
+            for (int seed = 0; seed < 100; seed++) {
+                var plan = new RandomCropRotationPlanner(new Random(seed), FIXED_CLOCK).plan(field(choices, null));
+                assertEquals(3, plan.alternatives().size());
+                assertEquals(3, plan.alternatives().stream()
+                        .map(option -> option.years().stream().map(CropOptimizationResponse.PlannedYear::crop).toList())
+                        .distinct().count());
+                for (var option : plan.alternatives()) {
+                    assertEquals(5, option.years().size());
+                    assertTrue(option.years().stream().allMatch(year -> choices.contains(year.crop()) && !year.rationale().isBlank()));
+                    assertTrue(!option.summary().isBlank() && !option.benefits().isEmpty() && !option.tradeoff().isBlank());
+                }
+            }
+        }
+    }
+
+    /**
      * Builds a test field input with a valid GeoJSON polygon.
      *
      * @param growableCrops farmer-selected crops
