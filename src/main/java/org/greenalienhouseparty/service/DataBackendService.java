@@ -29,6 +29,8 @@ import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.VegetationHistoryRequest;
+import org.greenalienhouseparty.dto.VegetationHistoryResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.slf4j.Logger;
@@ -358,6 +360,39 @@ public class DataBackendService {
             return client.cropCalendar(request);
         } finally {
             log.trace("Exiting cropCalendar()");
+        }
+    }
+
+    /**
+     * Retrieves the MODIS vegetation history of an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of 16-day NDVI to read, or {@code null} for the default
+     * @return NDVI seasons, low-cover windows and yearly growth and water use
+     */
+    public VegetationHistoryResponse fieldVegetationHistory(String fieldId, Integer years) {
+        log.trace("Entering fieldVegetationHistory()");
+        log.debug("Requesting field vegetation history from the data backend");
+        try {
+            return client.fieldVegetationHistory(fieldId, years);
+        } finally {
+            log.trace("Exiting fieldVegetationHistory()");
+        }
+    }
+
+    /**
+     * Retrieves the MODIS vegetation history of a user-provided outline.
+     *
+     * @param request the polygon and optional years of NDVI
+     * @return NDVI seasons, low-cover windows and yearly growth and water use
+     */
+    public VegetationHistoryResponse vegetationHistory(VegetationHistoryRequest request) {
+        log.trace("Entering vegetationHistory()");
+        log.debug("Requesting vegetation history for a provided outline from the data backend");
+        try {
+            return client.vegetationHistory(request);
+        } finally {
+            log.trace("Exiting vegetationHistory()");
         }
     }
 

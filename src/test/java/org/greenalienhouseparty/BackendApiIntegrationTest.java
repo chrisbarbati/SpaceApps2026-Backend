@@ -70,6 +70,10 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> vegetationQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> vegetationRequestBody = new AtomicReference<>();
+
     private static final AtomicReference<String> cropCalendarQuery = new AtomicReference<>();
 
     private static final AtomicReference<String> cropCalendarRequestBody = new AtomicReference<>();
@@ -369,6 +373,50 @@ class BackendApiIntegrationTest {
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
         assertTrue(paths.has("/fields/{field_id}/crop-calendar"));
         assertTrue(paths.has("/crop-calendar"));
+    }
+
+    /**
+     * Verifies vegetation history is re-exposed for a stored field and for an
+     * outline, passing the optional years through and keeping nulls.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsVegetationHistory() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/vegetation-history?years=3");
+        assertEquals(200, field.statusCode());
+        assertEquals("years=3", vegetationQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        JsonNode ndvi = body.get("ndvi");
+        assertEquals(0.3, ndvi.get("lowCoverThreshold").asDouble());
+        assertTrue(ndvi.get("observations").get(0).get("ndvi").isNull());
+        assertTrue(ndvi.get("observations").get(0).get("snow").asBoolean());
+        assertEquals(0.804, ndvi.get("observations").get(1).get("ndvi").asDouble());
+        assertEquals("2024-06-09", ndvi.get("byYear").get(0).get("greenUpDate").asString());
+        assertTrue(ndvi.get("byYear").get(1).get("peakNdvi").isNull());
+        assertEquals(1.0, ndvi.get("calendar").get(0).get("lowCoverShare").asDouble());
+        assertEquals("12-03", ndvi.get("lowCoverWindows").get(0).get("startDate").asString());
+        assertEquals(157, ndvi.get("lowCoverWindows").get(0).get("days").asInt());
+        assertEquals(128.0, ndvi.get("typical").get("lowCoverDays").asDouble());
+        assertEquals(0.557, body.get("yearly").get(0).get("nppKgCPerM2").asDouble());
+        assertEquals(0.51, body.get("yearly").get(0).get("etShareOfPet").asDouble());
+        assertEquals(560.6, body.get("yearlySummary").get("etMedianMm").asDouble());
+        assertEquals("modis-13Q1-061", body.get("source").get(0).get("collection").asString());
+        get("/fields/field-1/vegetation-history");
+        assertEquals("null", vegetationQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/vegetation-history", "{\"polygon\":" + outline + ",\"years\":2}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(2, JSON.readTree(vegetationRequestBody.get()).get("years").asInt());
+        post("/vegetation-history", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(vegetationRequestBody.get()).has("years"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/vegetation-history"));
+        assertTrue(paths.has("/vegetation-history"));
     }
 
     /**
@@ -826,6 +874,12 @@ class BackendApiIntegrationTest {
             } else {
                 response = "{" + cropCalendarJson() + "}";
             }
+        } else if (path.equals("/fields/field-1/vegetation-history")) {
+            vegetationQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + vegetationHistoryJson() + "}";
+        } else if (path.equals("/vegetation-history")) {
+            vegetationRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + vegetationHistoryJson() + "}";
         } else if (path.equals("/fields/field-1/agro-weather")) {
             agroWeatherQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\"," + agroWeatherJson() + "}";
@@ -935,6 +989,34 @@ class BackendApiIntegrationTest {
                 + "\"source\":{\"name\":\"GGCMI Phase 3 crop calendar\",\"url\":\"https://zenodo.org/records/5062513\","
                 + "\"doi\":\"10.5281/zenodo.5062513\",\"version\":\"1.01\",\"resolutionDeg\":0.5,"
                 + "\"license\":\"CC BY 4.0\",\"citation\":\"Jaegermeyr et al. (2021)\"},\"note\":\"Usual dates\"";
+    }
+
+    /**
+     * Creates a representative vegetation history body, without the surrounding braces.
+     *
+     * @return vegetation history JSON members
+     */
+    private static String vegetationHistoryJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"ndvi\":{\"period\":{\"start\":\"2024-01-01\",\"end\":\"2026-11-14\"},\"lowCoverThreshold\":0.3,"
+                + "\"observations\":[{\"date\":\"2024-01-01\",\"ndvi\":null,\"snow\":true,\"usableShare\":0.0},"
+                + "{\"date\":\"2024-07-11\",\"ndvi\":0.804,\"snow\":false,\"usableShare\":1.0}],"
+                + "\"byYear\":[{\"year\":2024,\"composites\":20,\"peakNdvi\":0.824,\"peakDate\":\"2024-07-27\","
+                + "\"greenUpDate\":\"2024-06-09\",\"brownDownDate\":\"2024-09-29\",\"greenDays\":128,\"lowCoverDays\":96},"
+                + "{\"year\":2025,\"composites\":11,\"peakNdvi\":null,\"peakDate\":null,\"greenUpDate\":null,"
+                + "\"brownDownDate\":null,\"greenDays\":null,\"lowCoverDays\":112}],"
+                + "\"calendar\":[{\"startDay\":1,\"startDate\":\"01-01\",\"medianNdvi\":null,\"lowCoverShare\":1.0,"
+                + "\"snowShare\":1.0,\"years\":3}],"
+                + "\"lowCoverWindows\":[{\"startDate\":\"12-03\",\"endDate\":\"05-08\",\"days\":157}],"
+                + "\"typical\":{\"peakNdvi\":0.823,\"greenDays\":112.0,\"lowCoverDays\":128.0}},"
+                + "\"yearly\":[{\"year\":2001,\"nppKgCPerM2\":0.557,\"etMm\":527.7,\"petMm\":1024.8,\"etShareOfPet\":0.51}],"
+                + "\"yearlySummary\":{\"nppMedianKgCPerM2\":0.571,\"nppTrendKgCPerM2PerYear\":0.00016,"
+                + "\"etMedianMm\":560.6,\"petMedianMm\":990.9,\"etShareOfPetMedian\":0.57},"
+                + "\"filesChecked\":125,\"filesUnreadable\":0,"
+                + "\"source\":[{\"name\":\"NASA MODIS/Terra Vegetation Indices 16-Day (MOD13Q1 v6.1)\","
+                + "\"collection\":\"modis-13Q1-061\",\"resolutionM\":250,\"from\":2000}],"
+                + "\"provider\":{\"name\":\"Microsoft Planetary Computer\",\"url\":\"https://example.test/pc\"},"
+                + "\"note\":\"MODIS pixels are 250 m\"";
     }
 
     /**

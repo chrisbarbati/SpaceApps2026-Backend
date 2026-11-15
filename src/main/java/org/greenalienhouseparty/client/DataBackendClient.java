@@ -30,6 +30,8 @@ import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.VegetationHistoryRequest;
+import org.greenalienhouseparty.dto.VegetationHistoryResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
@@ -547,6 +549,51 @@ public class DataBackendClient {
                     .body(CropCalendarResponse.class));
         } finally {
             log.trace("Exiting cropCalendar()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field vegetation history endpoint. The first
+     * request for a field reads many satellite files and takes about 30 seconds
+     * for 5 years.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of 16-day NDVI to read, or {@code null} for the default
+     * @return MODIS vegetation history of the field
+     */
+    public VegetationHistoryResponse fieldVegetationHistory(String fieldId, Integer years) {
+        log.trace("Entering fieldVegetationHistory()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/vegetation-history");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/vegetation-history")
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(VegetationHistoryResponse.class));
+        } finally {
+            log.trace("Exiting fieldVegetationHistory()");
+        }
+    }
+
+    /**
+     * Calls the vegetation history endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional years of NDVI
+     * @return MODIS vegetation history of the outline
+     */
+    public VegetationHistoryResponse vegetationHistory(VegetationHistoryRequest request) {
+        log.trace("Entering vegetationHistory()");
+        log.debug("Calling Python data backend POST /vegetation-history");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/vegetation-history")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(VegetationHistoryResponse.class));
+        } finally {
+            log.trace("Exiting vegetationHistory()");
         }
     }
 
