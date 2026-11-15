@@ -197,6 +197,24 @@ public class DataBackendService {
     }
 
     /**
+     * Retrieves the environmental summary of a stored field, with the default
+     * years and growing season.
+     *
+     * @param fieldId       the field identifier
+     * @param weatherSource {@code auto}, {@code daymet} or {@code power}, or {@code null} for the default
+     * @return the environmental summary, with the field identifier
+     */
+    public FieldSummaryResponse fieldSummary(String fieldId, String weatherSource) {
+        log.trace("Entering fieldSummary()");
+        log.debug("Requesting a stored field's environmental summary from the data backend");
+        try {
+            return client.fieldSummary(fieldId, weatherSource);
+        } finally {
+            log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
      * Retrieves crop history for an indexed field.
      *
      * @param fieldId the field identifier

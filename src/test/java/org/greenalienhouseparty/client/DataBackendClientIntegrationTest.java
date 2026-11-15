@@ -118,6 +118,9 @@ class DataBackendClientIntegrationTest {
                 response = "{\"region\":\"Ontario\",\"status\":\"complete\","
                         + "\"fields\":123,\"sourceUrl\":\"https://example.test/source\","
                         + "\"completedPartitions\":7}";
+            } else if (path.equals("/fields/field-1/summary")) {
+                sentSummaryRequest.set(exchange.getRequestURI().getQuery());
+                response = "{\"id\":\"field-1\"," + summaryResponse().substring(1);
             } else if (path.equals("/field-summary")) {
                 try {
                     sentSummaryRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -201,6 +204,7 @@ class DataBackendClientIntegrationTest {
             assertNull(summary.layers().weather().fallbackFrom());
             assertNull(summary.layers().terrain().source());
             assertNull(summary.terrain());
+            assertNull(summary.id());
             assertEquals("NASA POWER", summary.source().getFirst().getSource());
             assertEquals(50, summary.source().getFirst().getExtra().get("spatial_resolution_km").asInt());
 
@@ -209,6 +213,13 @@ class DataBackendClientIntegrationTest {
             assertEquals("2023-01-01", sent.get("period").get("start").asString());
             assertEquals(0.05, sent.get("weatherGridDeg").asDouble());
             assertEquals("power", sent.get("weatherSource").asString());
+
+            FieldSummaryResponse stored = client.fieldSummary("field-1", "daymet");
+            assertEquals("field-1", stored.id());
+            assertEquals(4321.5, stored.climate().gddAnnualMedian());
+            assertEquals("weatherSource=daymet", sentSummaryRequest.get());
+            client.fieldSummary("field-1", null);
+            assertNull(sentSummaryRequest.get());
 
             CropHistoryRequest cropRequest = new CropHistoryRequest();
             cropRequest.setPolygon(JSON.readTree(POLYGON));

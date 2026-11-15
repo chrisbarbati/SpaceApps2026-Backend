@@ -301,6 +301,29 @@ public class DataBackendClient {
     }
 
     /**
+     * Calls the data backend's environmental summary for a stored field, with
+     * the default years and growing season.
+     *
+     * @param fieldId       the field identifier
+     * @param weatherSource {@code auto}, {@code daymet} or {@code power}, or {@code null} for the default
+     * @return the environmental summary, with the field identifier
+     */
+    public FieldSummaryResponse fieldSummary(String fieldId, String weatherSource) {
+        log.trace("Entering fieldSummary()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/summary");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/summary")
+                            .queryParamIfPresent("weatherSource", Optional.ofNullable(weatherSource))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(FieldSummaryResponse.class));
+        } finally {
+            log.trace("Exiting fieldSummary()");
+        }
+    }
+
+    /**
      * Starts or polls Python's nonblocking field-season acquisition with Java-selected dates.
      *
      * @param fieldId stored field identifier

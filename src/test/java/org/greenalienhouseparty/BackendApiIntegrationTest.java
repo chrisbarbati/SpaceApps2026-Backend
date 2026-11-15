@@ -71,6 +71,8 @@ class BackendApiIntegrationTest {
 
     private static final AtomicReference<String> agroWeatherQuery = new AtomicReference<>();
 
+    private static final List<String> fieldSectionRequestIds = new CopyOnWriteArrayList<>();
+
     private static final AtomicReference<String> agroWeatherRequestBody = new AtomicReference<>();
 
     private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
@@ -217,6 +219,8 @@ class BackendApiIntegrationTest {
         HttpResponse<String> area = get("/fields/field-1");
         assertEquals(200, area.statusCode());
         assertEquals(12.3, json(area).get("hectares").asDouble());
+        assertEquals(30.4, json(area).get("acres").asDouble());
+        assertEquals(404, get("/fields/missing").statusCode());
 
         HttpResponse<String> fieldCropHistory = get("/fields/field-1/crop-history");
         assertEquals(200, fieldCropHistory.statusCode());
@@ -309,6 +313,95 @@ class BackendApiIntegrationTest {
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
         assertTrue(paths.has("/soil"));
         assertTrue(paths.has("/greenness"));
+    }
+
+    /**
+     * Verifies GET /fields/{field_id} returns the field's size with every
+     * default section fetched, the location-based sections looked up at the
+     * climate summary's centre, the slow sections only when requested, a
+     * failing section reported without failing the request, the caller's
+     * request ID on every data backend call, and a bad include rejected.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsEverythingKnownAboutAField() throws Exception {
+        fieldSectionRequestIds.clear();
+        HttpResponse<String> response = get("/fields/field-1", "field-details-trace");
+
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(12.3, body.get("hectares").asDouble());
+        assertEquals(30.4, body.get("acres").asDouble());
+        assertEquals(45.2, body.get("location").get("lat").asDouble());
+        assertEquals("climate", body.get("location").get("source").asString());
+        assertTrue(body.get("soil").has("topsoil"));
+        assertEquals("Soybeans", body.get("cropHistory").get("years").get(0).get("crop").asString());
+        assertEquals("field-1", body.get("climate").get("id").asString());
+        assertEquals(2900.0, body.get("climate").get("climate").get("chu_available_median").asDouble());
+        assertEquals("corn", body.get("cropCalendar").get("crops").get(0).get("crop").asString());
+        assertEquals("dry", body.get("agroWeather").get("soilWetness").get("latest").get("status").asString());
+        assertEquals("2", body.get("soilLandscape").get("landCapability").get("classCode").asString());
+        assertEquals(3, body.get("seasonalOutlook").get("periods").size());
+        assertTrue(body.get("greenness").isNull());
+        assertTrue(body.get("vegetationHistory").isNull());
+        assertTrue(body.get("droughtIndicators").isNull());
+        JsonNode sections = body.get("sections");
+        assertEquals(10, sections.size());
+        for (String name : List.of("soil", "cropHistory", "climate", "cropCalendar", "agroWeather", "soilLandscape",
+                "seasonalOutlook")) {
+            assertEquals("ok", sections.get(name).get("status").asString(), name);
+            assertTrue(!sections.get(name).has("detail"));
+        }
+        assertEquals("not_requested", sections.get("vegetationHistory").get("status").asString());
+        assertEquals("Add include=vegetation (or include=all) to fetch it.",
+                sections.get("vegetationHistory").get("detail").asString());
+        assertEquals(5, fieldSectionRequestIds.size());
+        assertTrue(fieldSectionRequestIds.stream().allMatch("field-details-trace"::equals));
+
+        JsonNode everything = json(get("/fields/field-1?include=all"));
+        assertEquals("2024-06-09", everything.get("vegetationHistory").get("ndvi").get("byYear").get(0)
+                .get("greenUpDate").asString());
+        assertEquals("2026-08-31", everything.get("droughtIndicators").get("latest").get("weekStart").asString());
+        assertEquals("ok", everything.get("sections").get("greenness").get("status").asString());
+        assertTrue(everything.get("greenness").has("id"));
+
+        JsonNode some = json(get("/fields/field-1?include=Drought,%20vegetation"));
+        assertEquals("ok", some.get("sections").get("droughtIndicators").get("status").asString());
+        assertEquals("ok", some.get("sections").get("vegetationHistory").get("status").asString());
+        assertEquals("not_requested", some.get("sections").get("greenness").get("status").asString());
+
+        HttpResponse<String> badInclude = get("/fields/field-1?include=imagery");
+        assertEquals(422, badInclude.statusCode());
+        assertTrue(json(badInclude).get("detail").asString().contains("greenness, vegetation, drought or all"));
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/fields/{field_id}/summary"));
+    }
+
+    /**
+     * Verifies a section whose source fails is reported as unavailable with
+     * the reason while the rest of the field is still returned, and that the
+     * location-based sections fall back to the crop calendar's location.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void reportsUnavailableFieldSectionsWithoutFailing() throws Exception {
+        HttpResponse<String> response = get("/fields/field-2");
+
+        assertEquals(200, response.statusCode());
+        JsonNode body = json(response);
+        assertEquals(5.0, body.get("hectares").asDouble());
+        assertTrue(body.get("climate").isNull());
+        JsonNode climate = body.get("sections").get("climate");
+        assertEquals("unavailable", climate.get("status").asString());
+        assertEquals("The data backend answered HTTP 502: NASA POWER daily weather is unavailable or invalid",
+                climate.get("detail").asString());
+        assertEquals("unavailable", body.get("sections").get("soil").get("status").asString());
+        assertEquals("cropCalendar", body.get("location").get("source").asString());
+        assertEquals(46.1, body.get("location").get("lat").asDouble());
+        assertEquals("ok", body.get("sections").get("cropCalendar").get("status").asString());
+        assertEquals("ok", body.get("sections").get("soilLandscape").get("status").asString());
     }
 
     /**
@@ -1002,6 +1095,9 @@ class BackendApiIntegrationTest {
     private static void handleDataBackendRequest(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
         receivedRequestId.set(exchange.getRequestHeaders().getFirst(RequestIdFilter.REQUEST_ID_HEADER));
+        if (path.startsWith("/fields/field-1/")) {
+            fieldSectionRequestIds.add(String.valueOf(exchange.getRequestHeaders().getFirst(RequestIdFilter.REQUEST_ID_HEADER)));
+        }
         int status = 200;
         String response;
         if (path.equals("/health")) {
@@ -1221,6 +1317,19 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/missing")) {
             status = 404;
             response = "{\"detail\":\"Field not found\"}";
+        } else if (path.equals("/fields/field-2")) {
+            response = "{\"id\":\"field-2\",\"hectares\":5.0,\"acres\":12.4}";
+        } else if (path.equals("/fields/field-2/crop-calendar")) {
+            response = "{\"id\":\"field-2\",\"location\":{\"lat\":46.1,\"lon\":-77.3},\"crops\":[]}";
+        } else if (path.startsWith("/fields/field-2/")) {
+            status = 502;
+            response = "{\"detail\":\"NASA POWER daily weather is unavailable or invalid\"}";
+        } else if (path.equals("/fields/field-1/summary")) {
+            // A centre away from the other tests' points, so the seasonal outlook cache they rely on is not touched
+            response = "{\"id\":\"field-1\",\"field\":{\"centroid\":{\"lat\":45.2,\"lon\":-78.1},\"areaHa\":12.3},"
+                    + "\"weatherSource\":\"daymet\",\"period\":{\"start\":\"20150101\",\"end\":\"20241231\"},"
+                    + "\"climate\":{\"gdd_annual_median\":2350.0,\"chu_available_median\":2900.0},"
+                    + "\"terrain\":{\"erosion_rating\":\"moderate\"},\"source\":[]}";
         } else if (path.equals("/field-coverage")) {
             response = "{\"region\":\"Orillia\",\"status\":\"sample\","
                     + "\"fields\":300,\"fieldCount\":300}";

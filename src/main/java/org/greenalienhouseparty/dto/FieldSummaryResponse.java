@@ -15,13 +15,15 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * Environmental summary returned by the data backend's {@code POST /field-summary}
- * endpoint.
+ * and {@code GET /fields/{field_id}/summary} endpoints.
  *
  * <p>The payload combines field geometry, the sampled weather cell, climate and
  * water-balance indicators, frost dates, monthly climatology, data coverage,
  * terrain statistics and source metadata. The {@code terrain} block is
  * {@code null} when the terrain provider failed while weather succeeded.</p>
  *
+ * @param id         the stored field's identifier for {@code GET /fields/{field_id}/summary}, or
+ *                   {@code null} for an outline posted to {@code POST /field-summary}
  * @param field      the field centroid and area
  * @param weatherSource the weather dataset used, {@code daymet} or {@code power}
  * @param weatherCell the weather sampling coordinate
@@ -38,6 +40,7 @@ import tools.jackson.databind.JsonNode;
  * @param source     source and provenance metadata
  */
 public record FieldSummaryResponse(
+        @JsonInclude(JsonInclude.Include.NON_NULL) String id,
         FieldInfo field,
         @Schema(allowableValues = {"daymet", "power"}) String weatherSource,
         WeatherCell weatherCell,
@@ -52,6 +55,43 @@ public record FieldSummaryResponse(
         TerrainInfo terrain,
         LayersInfo layers,
         List<SourceInfo> source) {
+
+    /**
+     * Creates a summary for a posted outline, which has no field identifier.
+     *
+     * @param field         the field centroid and area
+     * @param weatherSource the weather dataset used
+     * @param weatherCell   the weather sampling coordinate
+     * @param period        the analysis period
+     * @param season        the growing-season definition
+     * @param climate       climate indicators and trends
+     * @param water         water-balance indicators
+     * @param frost         frost dates and frost-free season
+     * @param monthly       monthly climatology
+     * @param yearly        year-by-year indicators
+     * @param coverage      data coverage and cleaning counts
+     * @param terrain       terrain statistics, or {@code null}
+     * @param layers        per-layer status
+     * @param source        source and provenance metadata
+     */
+    public FieldSummaryResponse(
+            FieldInfo field,
+            String weatherSource,
+            WeatherCell weatherCell,
+            PeriodInfo period,
+            SeasonInfo season,
+            ClimateInfo climate,
+            WaterInfo water,
+            FrostInfo frost,
+            List<MonthlyRow> monthly,
+            YearlyInfo yearly,
+            CoverageInfo coverage,
+            TerrainInfo terrain,
+            LayersInfo layers,
+            List<SourceInfo> source) {
+        this(null, field, weatherSource, weatherCell, period, season, climate, water, frost, monthly, yearly,
+                coverage, terrain, layers, source);
+    }
 
     /**
      * Field centroid and estimated area.
