@@ -64,6 +64,10 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> agroWeatherQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> agroWeatherRequestBody = new AtomicReference<>();
+
     private static HttpServer dataBackend;
 
     @LocalServerPort
@@ -271,6 +275,42 @@ class BackendApiIntegrationTest {
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
         assertTrue(paths.has("/soil"));
         assertTrue(paths.has("/greenness"));
+    }
+
+    /**
+     * Verifies agro-weather is re-exposed for a stored field and for an
+     * outline, passing the optional years through and keeping nulls.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsAgroWeather() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/agro-weather?years=10");
+        assertEquals(200, field.statusCode());
+        assertEquals("years=10", agroWeatherQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals("dry", body.get("soilWetness").get("latest").get("status").asString());
+        assertEquals(0, body.get("soilWetness").get("latest").get("percentile").asInt());
+        assertEquals(0.455, body.get("soilWetness").get("seasonPercentiles").get("rootZone").get("p50").asDouble());
+        assertEquals(537.9, body.get("et0").get("seasonPercentilesMm").get("p50").asDouble());
+        assertEquals(2025, body.get("seasonByYear").get(0).get("year").asInt());
+        assertTrue(body.get("seasonByYear").get(0).get("et0Mm").isNull());
+        assertEquals(241.1, body.get("location").get("elevationM").asDouble());
+        get("/fields/field-1/agro-weather");
+        assertEquals("null", agroWeatherQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/agro-weather", "{\"polygon\":" + outline + ",\"years\":12}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals(12, JSON.readTree(agroWeatherRequestBody.get()).get("years").asInt());
+        post("/agro-weather", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(agroWeatherRequestBody.get()).has("years"));
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/agro-weather"));
+        assertTrue(paths.has("/agro-weather"));
     }
 
     /**
@@ -659,6 +699,12 @@ class BackendApiIntegrationTest {
             response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
                     + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.equals("/fields/field-1/agro-weather")) {
+            agroWeatherQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + agroWeatherJson() + "}";
+        } else if (path.equals("/agro-weather")) {
+            agroWeatherRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            response = "{" + agroWeatherJson() + "}";
         } else if (path.equals("/fields/field-1/greenness")) {
             greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\"," + greennessJson() + "}";
@@ -740,6 +786,29 @@ class BackendApiIntegrationTest {
             response = "{\"detail\":\"Not found\"}";
         }
         respond(exchange, status, response);
+    }
+
+    /**
+     * Creates a representative agro-weather body, without the surrounding braces.
+     *
+     * @return agro-weather JSON members
+     */
+    private static String agroWeatherJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938,\"elevationM\":241.1},"
+                + "\"period\":{\"start\":\"2006-01-01\",\"end\":\"2026-11-14\"},\"season\":{\"months\":[5,6,7,8,9]},"
+                + "\"soilWetness\":{\"latest\":{\"date\":\"2026-11-11\",\"rootZone\":0.21,\"surface\":0.35,"
+                + "\"rootZone30DayMean\":0.207,\"percentile\":0,\"comparedYears\":20,\"status\":\"dry\"},"
+                + "\"monthly\":[{\"month\":1,\"rootZone\":0.52,\"surface\":0.6}],"
+                + "\"seasonPercentiles\":{\"rootZone\":{\"p10\":0.428,\"p50\":0.455,\"p90\":0.497,\"years\":21},"
+                + "\"surface\":null}},"
+                + "\"et0\":{\"method\":\"FAO-56 Penman-Monteith\",\"seasonPercentilesMm\":{\"p10\":489.3,\"p50\":537.9,"
+                + "\"p90\":570.7,\"years\":21},\"monthlyMmPerDay\":[{\"month\":1,\"et0\":0.4}]},"
+                + "\"seasonMeans\":{\"solarMjM2Day\":19.5,\"windMs\":1.36,\"humidityPct\":68.6},"
+                + "\"seasonByYear\":[{\"year\":2025,\"rootZone\":0.424,\"surface\":0.406,\"et0Mm\":null,"
+                + "\"solarMjM2Day\":19.52,\"windMs\":1.35,\"humidityPct\":65.4}],"
+                + "\"units\":{\"et0Mm\":\"mm per season\"},"
+                + "\"source\":{\"name\":\"NASA POWER (MERRA-2, CERES)\",\"url\":\"https://example.test/power\","
+                + "\"resolutionKm\":50,\"variables\":[\"GWETROOT\"]},\"note\":\"Regional values\"";
     }
 
     /**

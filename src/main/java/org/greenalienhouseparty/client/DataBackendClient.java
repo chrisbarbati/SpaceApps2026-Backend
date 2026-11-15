@@ -10,6 +10,8 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.greenalienhouseparty.config.RequestIdFilter;
+import org.greenalienhouseparty.dto.AgroWeatherRequest;
+import org.greenalienhouseparty.dto.AgroWeatherResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -454,6 +456,50 @@ public class DataBackendClient {
                     .body(FieldSoilBatchResponse.class));
         } finally {
             log.trace("Exiting fieldSoils()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field agro-weather endpoint (NASA POWER soil
+     * wetness, radiation, wind, humidity and ET0).
+     *
+     * @param fieldId the field identifier
+     * @param years   years of history to read, or {@code null} for the default
+     * @return agro-weather around the field
+     */
+    public AgroWeatherResponse fieldAgroWeather(String fieldId, Integer years) {
+        log.trace("Entering fieldAgroWeather()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/agro-weather");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/agro-weather")
+                            .queryParamIfPresent("years", Optional.ofNullable(years))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(AgroWeatherResponse.class));
+        } finally {
+            log.trace("Exiting fieldAgroWeather()");
+        }
+    }
+
+    /**
+     * Calls the agro-weather endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional years of history
+     * @return agro-weather around the outline
+     */
+    public AgroWeatherResponse agroWeather(AgroWeatherRequest request) {
+        log.trace("Entering agroWeather()");
+        log.debug("Calling Python data backend POST /agro-weather");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/agro-weather")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(AgroWeatherResponse.class));
+        } finally {
+            log.trace("Exiting agroWeather()");
         }
     }
 

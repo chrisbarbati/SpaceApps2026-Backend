@@ -7,6 +7,8 @@ import java.util.Set;
 import java.util.function.Function;
 
 import org.greenalienhouseparty.client.DataBackendClient;
+import org.greenalienhouseparty.dto.AgroWeatherRequest;
+import org.greenalienhouseparty.dto.AgroWeatherResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -286,6 +288,40 @@ public class DataBackendService {
             return new FieldCropHistoryBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
         } finally {
             log.trace("Exiting fieldCropHistories()");
+        }
+    }
+
+    /**
+     * Retrieves NASA POWER agro-weather (soil wetness, radiation, wind,
+     * humidity and ET0) around an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param years   years of history to read, or {@code null} for the default
+     * @return agro-weather around the field
+     */
+    public AgroWeatherResponse fieldAgroWeather(String fieldId, Integer years) {
+        log.trace("Entering fieldAgroWeather()");
+        log.debug("Requesting field agro-weather from the data backend");
+        try {
+            return client.fieldAgroWeather(fieldId, years);
+        } finally {
+            log.trace("Exiting fieldAgroWeather()");
+        }
+    }
+
+    /**
+     * Retrieves NASA POWER agro-weather around a user-provided outline.
+     *
+     * @param request the polygon and optional years of history
+     * @return agro-weather around the outline
+     */
+    public AgroWeatherResponse agroWeather(AgroWeatherRequest request) {
+        log.trace("Entering agroWeather()");
+        log.debug("Requesting agro-weather for a provided outline from the data backend");
+        try {
+            return client.agroWeather(request);
+        } finally {
+            log.trace("Exiting agroWeather()");
         }
     }
 
