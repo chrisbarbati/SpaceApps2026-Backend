@@ -48,7 +48,10 @@ public class CropOptimizationController {
     @Operation(summary = "Generate five-year crop plans",
             description = "Returns a five-year plan for each field from the farmer's growable crops. Give crops by "
                     + "their id from GET /crops (display names are also accepted). The planner field names the "
-                    + "implementation used: random-placeholder (default) picks crops at random; "
+                    + "implementation used: random-placeholder (default) returns three distinct random rotations "
+                    + "with example explanations and tradeoffs when at least two growable crops are supplied "
+                    + "(one option for a single crop). The random demo accepts any nonblank current-crop answer, "
+                    + "including pasture and unknown. The years field mirrors the first alternative for older clients. "
                     + "dynamic-soil-reliability optimizes soil health and crop reliability from soil, terrain, "
                     + "climate, crop-calendar, regional soil and crop-history data, and adds soil scores, a "
                     + "reliability value from 0 to 1, income, plain-language reasons for each choice and the "
