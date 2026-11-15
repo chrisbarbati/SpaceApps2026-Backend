@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -21,6 +22,7 @@ import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.GreennessRequest;
+import org.greenalienhouseparty.dto.ImageryRequest;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
 import org.slf4j.MDC;
@@ -51,6 +53,8 @@ class DataBackendClientIntegrationTest {
         AtomicReference<String> sentCropHistoryRequest = new AtomicReference<>();
         AtomicReference<String> sentSoilRequest = new AtomicReference<>();
         AtomicReference<String> sentGreennessRequest = new AtomicReference<>();
+        AtomicReference<String> sentImageryQuery = new AtomicReference<>();
+        AtomicReference<String> sentImageryRequest = new AtomicReference<>();
         AtomicReference<String> receivedRequestId = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -100,6 +104,16 @@ class DataBackendClientIntegrationTest {
                     throw new RuntimeException(e);
                 }
                 response = greennessResponse();
+            } else if (path.equals("/fields/field-1/imagery")) {
+                sentImageryQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+                response = "{\"id\":\"field-1\"," + imageryJson() + "}";
+            } else if (path.equals("/imagery")) {
+                try {
+                    sentImageryRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                response = "{" + imageryJson() + "}";
             } else if (path.equals("/field-coverage")) {
                 response = "{\"region\":\"Ontario\",\"status\":\"complete\","
                         + "\"fields\":123,\"sourceUrl\":\"https://example.test/source\","
@@ -228,6 +242,40 @@ class DataBackendClientIntegrationTest {
             greennessRequest.setYear(2024);
             client.greenness(greennessRequest);
             assertEquals(2024, JSON.readTree(sentGreennessRequest.get()).get("year").asInt());
+
+            var fieldImagery = client.fieldImagery("field-1", "sentinel-2", LocalDate.of(2025, 6, 1),
+                    LocalDate.of(2025, 9, 1), 20.0, 2);
+            assertEquals("field-1", fieldImagery.id());
+            assertEquals(LocalDate.of(2025, 6, 1), fieldImagery.period().start());
+            assertEquals(4, fieldImagery.bbox().size());
+            var scene = fieldImagery.images().getFirst();
+            assertEquals("HLS.S30.T16TCK.2025200T163901.v2.0", scene.sceneId());
+            assertEquals(OffsetDateTime.parse("2025-07-19T16:49:05.024Z"), scene.datetime());
+            assertEquals(12.0, scene.sceneCloudCoverPct());
+            assertTrue(scene.imageUrl().endsWith(".png?collection=hls2-s30&item=X"));
+            assertNull(scene.sourceImageUrl());
+            assertEquals(-87.8, scene.sceneBbox().get(2));
+            assertTrue(fieldImagery.hasMore());
+            assertEquals(List.of("hls2-l30", "hls2-s30"), fieldImagery.source().collections());
+            assertEquals(30, fieldImagery.source().resolutionM());
+            assertEquals("dataset=sentinel-2&start=2025-06-01&end=2025-09-01&maxCloud=20.0&limit=2",
+                    sentImageryQuery.get());
+            client.fieldImagery("field-1", null, null, null, null, null);
+            assertEquals("null", sentImageryQuery.get());
+
+            ImageryRequest imageryRequest = new ImageryRequest();
+            imageryRequest.setPolygon(JSON.readTree(POLYGON));
+            var outlineImagery = client.imagery(imageryRequest);
+            assertNull(outlineImagery.id());
+            assertEquals(1, outlineImagery.images().size());
+            JsonNode sentImagery = JSON.readTree(sentImageryRequest.get());
+            assertEquals("Polygon", sentImagery.get("polygon").get("type").asString());
+            assertEquals(1, sentImagery.size());
+            imageryRequest.setEnd(LocalDate.of(2025, 9, 1));
+            imageryRequest.setLimit(3);
+            client.imagery(imageryRequest);
+            assertEquals("2025-09-01", JSON.readTree(sentImageryRequest.get()).get("end").asString());
+            assertEquals(3, JSON.readTree(sentImageryRequest.get()).get("limit").asInt());
         } finally {
             server.stop(0);
         }
@@ -375,6 +423,26 @@ class DataBackendClientIntegrationTest {
                 + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
                 + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\",\"resolutionM\":10,"
                 + "\"license\":\"Copernicus Sentinel data, free and open\"},\"note\":\"Mean NDVI\"}";
+    }
+
+    /**
+     * Returns a representative imagery result with one scene, without the
+     * surrounding braces.
+     *
+     * @return imagery JSON members
+     */
+    private static String imageryJson() {
+        return "\"period\":{\"start\":\"2025-06-01\",\"end\":\"2025-09-01\"},"
+                + "\"bbox\":[-88.95,40.45,-88.947,40.453],"
+                + "\"images\":[{\"sceneId\":\"HLS.S30.T16TCK.2025200T163901.v2.0\","
+                + "\"datetime\":\"2025-07-19T16:49:05.024Z\",\"collection\":\"hls2-s30\",\"platform\":\"sentinel-2b\","
+                + "\"sceneCloudCoverPct\":12,\"imageUrl\":\"https://planetarycomputer.microsoft.com/api/data/v1/item/"
+                + "bbox/-88.95,40.45,-88.947,40.453.png?collection=hls2-s30&item=X\","
+                + "\"sceneBbox\":[-89.1,40.0,-87.8,41.0],\"sceneUrl\":\"https://example.test/stac/X\"}],"
+                + "\"hasMore\":true,\"dataset\":\"hls\","
+                + "\"source\":{\"name\":\"NASA Harmonized Landsat Sentinel-2 v2.0\","
+                + "\"provider\":\"Microsoft Planetary Computer\",\"collections\":[\"hls2-l30\",\"hls2-s30\"],"
+                + "\"resolutionM\":30,\"url\":\"https://hls.gsfc.nasa.gov/\"},\"note\":\"Newest first\"";
     }
 
     /**

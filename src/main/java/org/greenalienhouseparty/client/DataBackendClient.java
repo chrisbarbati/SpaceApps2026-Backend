@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +23,7 @@ import org.greenalienhouseparty.dto.DroughtIndicatorsResponse;
 import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldGreennessResponse;
+import org.greenalienhouseparty.dto.FieldImageryResponse;
 import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
 import org.greenalienhouseparty.dto.FieldSoilResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
@@ -30,6 +32,8 @@ import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
+import org.greenalienhouseparty.dto.HlsAcquisitionResponse;
+import org.greenalienhouseparty.dto.ImageryRequest;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.greenalienhouseparty.dto.VegetationHistoryRequest;
@@ -294,6 +298,22 @@ public class DataBackendClient {
         } finally {
             log.trace("Exiting fieldSummary()");
         }
+    }
+
+    /**
+     * Starts or polls Python's nonblocking field-season acquisition with Java-selected dates.
+     *
+     * @param fieldId stored field identifier
+     * @param start first acquisition date
+     * @param end last acquisition date
+     * @param retry whether terminal failures should be retried
+     * @return acquired measurements and persisted progress
+     */
+    public HlsAcquisitionResponse fieldSeason(String fieldId, java.time.LocalDate start, java.time.LocalDate end, boolean retry) {
+        return execute(() -> restClient.get()
+                .uri(builder -> builder.path("/fields/{id}/season").queryParam("start", start)
+                        .queryParam("end", end).queryParam("retry", retry).build(fieldId))
+                .retrieve().body(HlsAcquisitionResponse.class));
     }
 
     /**
@@ -642,6 +662,59 @@ public class DataBackendClient {
                     .body(DroughtIndicatorsResponse.class));
         } finally {
             log.trace("Exiting droughtIndicators()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field imagery endpoint. Unset options are left
+     * out so the data backend applies its defaults.
+     *
+     * @param fieldId  the field identifier
+     * @param dataset  {@code hls} or {@code sentinel-2}, or {@code null}
+     * @param start    first acquisition date, or {@code null}
+     * @param end      last acquisition date, or {@code null}
+     * @param maxCloud maximum whole-scene cloud percentage, or {@code null}
+     * @param limit    maximum number of scenes, or {@code null}
+     * @return matching scenes with provider image addresses
+     */
+    public FieldImageryResponse fieldImagery(String fieldId, String dataset, LocalDate start, LocalDate end,
+                                             Double maxCloud, Integer limit) {
+        log.trace("Entering fieldImagery()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/imagery");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/imagery")
+                            .queryParamIfPresent("dataset", Optional.ofNullable(dataset))
+                            .queryParamIfPresent("start", Optional.ofNullable(start))
+                            .queryParamIfPresent("end", Optional.ofNullable(end))
+                            .queryParamIfPresent("maxCloud", Optional.ofNullable(maxCloud))
+                            .queryParamIfPresent("limit", Optional.ofNullable(limit))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(FieldImageryResponse.class));
+        } finally {
+            log.trace("Exiting fieldImagery()");
+        }
+    }
+
+    /**
+     * Calls the data backend's imagery endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional search options
+     * @return matching scenes with provider image addresses, without a field ID
+     */
+    public FieldImageryResponse imagery(ImageryRequest request) {
+        log.trace("Entering imagery()");
+        log.debug("Calling Python data backend POST /imagery");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/imagery")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(FieldImageryResponse.class));
+        } finally {
+            log.trace("Exiting imagery()");
         }
     }
 

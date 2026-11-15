@@ -4,6 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.greenalienhouseparty.client.DataBackendException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -106,6 +108,25 @@ public class GlobalExceptionHandler {
             return ResponseEntity.unprocessableEntity().body(body);
         } finally {
             log.trace("Exiting handleInvalidRequestException()");
+        }
+    }
+
+    /**
+     * Translates imagery provider failures into a 502 error response.
+     *
+     * @param exception the failed image fetch
+     * @return a bad-gateway response with a detail message
+     */
+    @ExceptionHandler(ImageryProviderException.class)
+    public ResponseEntity<Map<String, Object>> handleImageryProviderException(ImageryProviderException exception) {
+        log.trace("Entering handleImageryProviderException()");
+        log.error("Handling imagery provider failure: {}", exception.getMessage());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("detail", exception.getMessage());
+        try {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).contentType(MediaType.APPLICATION_JSON).body(body);
+        } finally {
+            log.trace("Exiting handleImageryProviderException()");
         }
     }
 
