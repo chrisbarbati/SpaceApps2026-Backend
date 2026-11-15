@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -26,6 +28,11 @@ public class FieldSummaryRequest {
     private PeriodRequest period;
 
     private SeasonRequest season;
+
+    @Schema(description = "auto (default) uses NASA Daymet (1 km) inside North America when the period ends by the "
+            + "last complete year, otherwise NASA POWER (about 50 km); daymet or power forces one source.",
+            allowableValues = {"auto", "daymet", "power"})
+    private String weatherSource;
 
     private Double weatherGridDeg;
 
@@ -71,6 +78,21 @@ public class FieldSummaryRequest {
      */
     public void setSeason(SeasonRequest season) {
         this.season = season;
+    }
+
+    /**
+     * @return {@code auto}, {@code daymet} or {@code power}, or {@code null} for the backend default
+     *         ({@code auto})
+     */
+    public String getWeatherSource() {
+        return weatherSource;
+    }
+
+    /**
+     * @param weatherSource the weather dataset to use
+     */
+    public void setWeatherSource(String weatherSource) {
+        this.weatherSource = weatherSource;
     }
 
     /**

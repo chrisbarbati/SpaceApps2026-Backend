@@ -52,6 +52,14 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean fieldDatabaseUp = new AtomicBoolean(true);
 
+    private static final AtomicReference<String> greennessQuery = new AtomicReference<>();
+
+    private static final List<String> soilBatchBodies = new CopyOnWriteArrayList<>();
+
+    private static final AtomicReference<String> soilRequestBody = new AtomicReference<>();
+
+    private static final AtomicReference<String> greennessRequestBody = new AtomicReference<>();
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
@@ -76,6 +84,10 @@ class BackendApiIntegrationTest {
         soilMoistureAvailable.set(true);
         batchRequestBodies.clear();
         fieldDatabaseUp.set(true);
+        greennessQuery.set(null);
+        soilBatchBodies.clear();
+        soilRequestBody.set(null);
+        greennessRequestBody.set(null);
     }
 
     /**
@@ -188,7 +200,7 @@ class BackendApiIntegrationTest {
 
         String requestBody = "{\"polygon\":{\"type\":\"Polygon\",\"coordinates\":["
                 + "[[0,0],[1,0],[1,1],[0,1],[0,0]]]},\"period\":{"
-                + "\"start\":\"2023-01-01\",\"end\":\"2023-12-31\"}}";
+                + "\"start\":\"2023-01-01\",\"end\":\"2023-12-31\"},\"weatherSource\":\"auto\"}";
         HttpRequest summaryRequest = HttpRequest.newBuilder(URI.create(url("/field-summary")))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
@@ -197,6 +209,68 @@ class BackendApiIntegrationTest {
         assertEquals(200, summary.statusCode());
         assertEquals(4321.5, json(summary).get("climate").get("gdd_annual_median").asDouble());
         assertEquals("Polygon", JSON.readTree(summaryRequestBody.get()).get("polygon").get("type").asString());
+        assertEquals("auto", JSON.readTree(summaryRequestBody.get()).get("weatherSource").asString());
+        assertEquals("power", json(summary).get("weatherSource").asString());
+        assertEquals(3533.2, json(summary).get("climate").get("chu_available_median").asDouble());
+        JsonNode weatherLayer = json(summary).get("layers").get("weather");
+        assertEquals("power", weatherLayer.get("source").asString());
+        assertEquals("daymet", weatherLayer.get("fallbackFrom").asString());
+        assertEquals("NASA Daymet is unavailable", weatherLayer.get("message").asString());
+        JsonNode terrainLayer = json(summary).get("layers").get("terrain");
+        assertTrue(!terrainLayer.has("source") && !terrainLayer.has("fallbackFrom"));
+    }
+
+    /**
+     * Verifies that field summary requests without a weather source leave it out,
+     * so the data backend applies its own default.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void omitsUnsetWeatherSourceFromFieldSummaryRequest() throws Exception {
+        HttpResponse<String> summary = post("/field-summary",
+                "{\"polygon\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}");
+
+        assertEquals(200, summary.statusCode());
+        assertTrue(!JSON.readTree(summaryRequestBody.get()).has("weatherSource"));
+    }
+
+    /**
+     * Verifies topsoil and greenness for a caller-provided outline pass the
+     * request through, return the data backend's estimates without a field ID,
+     * and keep the data backend's validation errors.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsSoilAndGreennessForAnOutline() throws Exception {
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+
+        HttpResponse<String> soil = post("/soil", "{\"polygon\":" + outline + "}");
+        assertEquals(200, soil.statusCode());
+        assertTrue(!json(soil).has("id"));
+        assertEquals("Sandy loam", json(soil).get("derived").get("textureClass").asString());
+        assertEquals(40, json(soil).get("derived").get("availableWaterMm").asInt());
+        assertEquals("Polygon", JSON.readTree(soilRequestBody.get()).get("polygon").get("type").asString());
+        HttpResponse<String> invalidSoil = post("/soil", "{\"polygon\":" + outline + ",\"extra\":true}");
+        assertEquals(422, invalidSoil.statusCode());
+        assertEquals("Extra inputs are not permitted", json(invalidSoil).get("detail").asString());
+
+        HttpResponse<String> greenness = post("/greenness", "{\"polygon\":" + outline + ",\"year\":2024}");
+        assertEquals(200, greenness.statusCode());
+        assertTrue(!json(greenness).has("id"));
+        assertEquals(2024, json(greenness).get("year").asInt());
+        assertEquals(0.77, json(greenness).get("summary").get("peakNdvi").asDouble());
+        assertEquals(2024, JSON.readTree(greennessRequestBody.get()).get("year").asInt());
+        assertEquals("Polygon", JSON.readTree(greennessRequestBody.get()).get("polygon").get("type").asString());
+        post("/greenness", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(greennessRequestBody.get()).has("year"));
+        HttpResponse<String> invalidGreenness = post("/greenness", "{\"polygon\":" + outline + ",\"extra\":true}");
+        assertEquals(422, invalidGreenness.statusCode());
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/soil"));
+        assertTrue(paths.has("/greenness"));
     }
 
     /**
@@ -384,6 +458,16 @@ class BackendApiIntegrationTest {
         assertEquals("field-2", results.get(0).get("id").asString());
         assertEquals("ok", results.get(0).get("status").asString());
         assertEquals("Soybeans", results.get(0).get("history").get("rotation").get(0).asString());
+        JsonNode summary = results.get(0).get("history").get("summary");
+        assertEquals("A 3-year rotation: corn, corn, then soybeans.", summary.get("pattern").get("text").asString());
+        assertEquals("Corn", summary.get("expectedThisYear").get("crop").asString());
+        assertEquals("high", summary.get("expectedThisYear").get("confidence").asString());
+        assertEquals(2025, summary.get("lastSeason").get("year").asInt());
+        assertEquals(15, summary.get("yearsOfData").asInt());
+        assertTrue(!summary.get("flags").get("possiblyMerged").asBoolean());
+        assertEquals("soybeans", results.get(0).get("history").get("years").get(0).get("group").asString());
+        assertEquals("Soybeans", results.get(0).get("history").get("years").get(0).get("groupLabel").asString());
+        assertEquals(0.996, results.get(0).get("history").get("years").get(0).get("cropShare").asDouble());
         assertTrue(!results.get(0).has("error"));
         assertTrue(!results.get(0).has("ok"));
         assertEquals("missing", results.get(1).get("id").asString());
@@ -416,6 +500,75 @@ class BackendApiIntegrationTest {
         HttpResponse<String> outage = post("/fields/crop-history", "{\"ids\":[\"field-1\"]}");
         assertEquals(503, outage.statusCode());
         assertEquals("Field boundary database is unavailable or invalid", json(outage).get("detail").asString());
+    }
+
+    /**
+     * Verifies single-field and multi-field soil pass through unchanged, including
+     * per-field errors, and that invalid selections stop before the data backend.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsFieldSoil() throws Exception {
+        HttpResponse<String> single = get("/fields/field-1/soil");
+        assertEquals(200, single.statusCode());
+        JsonNode soil = json(single);
+        assertEquals("field-1", soil.get("id").asString());
+        assertEquals(6.82, soil.get("topsoil").get("ph").asDouble());
+        assertEquals("Sandy loam", soil.get("derived").get("textureClass").asString());
+        assertEquals(40, soil.get("derived").get("availableWaterMm").asInt());
+        assertEquals(16.45, soil.get("depths").get("15-30cm").get("clayPct").asDouble());
+        assertEquals("mm in 0-30 cm", soil.get("units").get("availableWaterMm").asString());
+        assertEquals(404, get("/fields/missing/soil").statusCode());
+
+        HttpResponse<String> batch = post("/fields/soil", "{\"ids\":[\"field-1\",\"missing\",\"field-1\"]}");
+        assertEquals(200, batch.statusCode());
+        JsonNode body = json(batch);
+        assertEquals(1, body.get("failed").asInt());
+        assertEquals("Sandy loam", body.get("results").get(0).get("soil").get("derived").get("textureClass").asString());
+        assertEquals(52.31, body.get("results").get(0).get("soil").get("topsoil").get("sandPct").asDouble());
+        assertTrue(!body.get("results").get(0).has("ok"));
+        assertEquals(404, body.get("results").get(1).get("error").get("code").asInt());
+        assertEquals("[\"field-1\",\"missing\"]", JSON.readTree(soilBatchBodies.get(0)).get("ids").toString());
+
+        assertEquals(422, post("/fields/soil", "{\"ids\":[]}").statusCode());
+        assertEquals(1, soilBatchBodies.size());
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/soil"));
+        assertTrue(paths.has("/fields/soil"));
+    }
+
+    /**
+     * Verifies field greenness passes the optional year through and returns the
+     * season unchanged, and that errors keep their status.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsFieldGreenness() throws Exception {
+        HttpResponse<String> response = get("/fields/field-1/greenness?year=2024");
+
+        assertEquals(200, response.statusCode());
+        assertEquals("year=2024", greennessQuery.get());
+        JsonNode body = json(response);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals("2024-04-01", body.get("period").get("start").asString());
+        assertEquals("2024-07-14", body.get("observations").get(0).get("date").asString());
+        assertEquals(0.77, body.get("observations").get(0).get("ndvi").asDouble());
+        assertEquals(0.84, body.get("observations").get(0).get("ndviP90").asDouble());
+        assertEquals("2024-07-14", body.get("summary").get("peakDate").asString());
+        assertTrue(body.get("summary").get("greenUpDate").isNull());
+        assertEquals("sentinel-2-c1-l2a", body.get("source").get("collection").asString());
+
+        get("/fields/field-1/greenness");
+        assertEquals("null", greennessQuery.get());
+
+        assertEquals(404, get("/fields/missing/greenness").statusCode());
+        HttpResponse<String> providerFailure = get("/fields/provider-error/greenness");
+        assertEquals(502, providerFailure.statusCode());
+        assertEquals("Earth Search (Sentinel-2 catalogue) is unavailable", json(providerFailure).get("detail").asString());
+        assertEquals(422, get("/fields/field-1/greenness?year=soon").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/fields/{field_id}/greenness"));
     }
 
     /**
@@ -493,6 +646,36 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/fields/provider-error/crop-history")) {
             status = 502;
             response = "{\"detail\":\"AAFC Annual Crop Inventory is unavailable\"}";
+        } else if (path.equals("/fields/field-1/soil")) {
+            response = "{\"id\":\"field-1\"," + soilJson() + "}";
+        } else if (path.equals("/fields/soil")) {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            soilBatchBodies.add(body);
+            response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
+                    + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
+                    + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.equals("/fields/field-1/greenness")) {
+            greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + greennessJson() + "}";
+        } else if (path.equals("/greenness")) {
+            greennessRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (greennessRequestBody.get().contains("\"extra\"")) {
+                status = 422;
+                response = "{\"detail\":\"Extra inputs are not permitted\"}";
+            } else {
+                response = "{" + greennessJson() + "}";
+            }
+        } else if (path.equals("/soil")) {
+            soilRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (soilRequestBody.get().contains("\"extra\"")) {
+                status = 422;
+                response = "{\"detail\":\"Extra inputs are not permitted\"}";
+            } else {
+                response = "{" + soilJson() + "}";
+            }
+        } else if (path.equals("/fields/provider-error/greenness")) {
+            status = 502;
+            response = "{\"detail\":\"Earth Search (Sentinel-2 catalogue) is unavailable\"}";
         } else if (path.equals("/fields/crop-history")) {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             batchRequestBodies.add(body);
@@ -537,19 +720,57 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/field-summary")) {
             summaryRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             response = "{\"field\":{\"centroid\":{\"lat\":44.6,\"lon\":-79.4},\"areaHa\":1.2},"
+                    + "\"weatherSource\":\"power\","
                     + "\"weatherCell\":{\"lat\":44.6,\"lon\":-79.4,\"gridDeg\":0.05},"
                     + "\"period\":{\"start\":\"20230101\",\"end\":\"20231231\"},"
                     + "\"season\":{\"months\":[5,6,7,8,9],\"crosses_year\":false,"
                     + "\"base_temp_c\":10,\"label\":\"May-Sep\"},"
-                    + "\"climate\":{\"gdd_annual_median\":4321.5},"
+                    + "\"climate\":{\"gdd_annual_median\":4321.5,\"chu_available_median\":3533.2},"
                     + "\"water\":{\"season_et0_mm_median\":125},\"terrain\":null,"
-                    + "\"layers\":{\"weather\":{\"status\":\"ok\"},"
+                    + "\"layers\":{\"weather\":{\"status\":\"ok\",\"source\":\"power\",\"fallbackFrom\":\"daymet\","
+                    + "\"message\":\"NASA Daymet is unavailable\"},"
                     + "\"terrain\":{\"status\":\"error\"}},\"source\":[]}";
         } else {
             status = 404;
             response = "{\"detail\":\"Not found\"}";
         }
         respond(exchange, status, response);
+    }
+
+    /**
+     * Creates representative soil properties, without the surrounding braces.
+     *
+     * @return soil JSON members
+     */
+    private static String soilJson() {
+        String props = "{\"ph\":6.82,\"clayPct\":16.45,\"sandPct\":52.31,\"siltPct\":31.24,"
+                + "\"organicCarbonGPerKg\":28.7,\"nitrogenGPerKg\":2.76,\"bulkDensityGPerCm3\":1.48,\"cecCmolPerKg\":17.05}";
+        return "\"topsoil\":" + props + ","
+                + "\"derived\":{\"textureClass\":\"Sandy loam\",\"organicMatterPct\":4.9,\"phClass\":\"Neutral\","
+                + "\"availableWaterMm\":40},"
+                + "\"depths\":{\"0-5cm\":" + props + ",\"5-15cm\":" + props + ",\"15-30cm\":" + props + "},"
+                + "\"units\":{\"ph\":\"pH\",\"availableWaterMm\":\"mm in 0-30 cm\"},"
+                + "\"source\":{\"name\":\"ISRIC SoilGrids 2.0\",\"url\":\"https://soilgrids.org\","
+                + "\"resolutionM\":250,\"license\":\"CC BY 4.0\"},\"note\":\"Estimates, not a soil test\"";
+    }
+
+    /**
+     * Creates a representative greenness season, without the surrounding braces.
+     *
+     * @return greenness JSON members
+     */
+    private static String greennessJson() {
+        return "\"year\":2024,"
+                + "\"period\":{\"start\":\"2024-04-01\",\"end\":\"2024-11-15\"},"
+                + "\"observations\":[{\"date\":\"2024-07-14\",\"ndvi\":0.77,\"ndviP10\":0.66,"
+                + "\"ndviP90\":0.84,\"clearShare\":1.0}],"
+                + "\"summary\":{\"peakNdvi\":0.77,\"peakDate\":\"2024-07-14\",\"latestNdvi\":0.77,"
+                + "\"latestDate\":\"2024-07-14\",\"greenUpDate\":null},"
+                + "\"scenesChecked\":22,\"scenesUnreadable\":0,"
+                + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
+                + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\","
+                + "\"resolutionM\":10,\"license\":\"Copernicus Sentinel data, free and open\"},"
+                + "\"note\":\"Mean NDVI over the clear part of the field\"";
     }
 
     /**
@@ -581,10 +802,19 @@ class BackendApiIntegrationTest {
                 + "\"source\":{\"name\":\"AAFC Annual Crop Inventory\",\"url\":\"https://example.test/aci\","
                 + "\"license\":\"Open Government Licence - Canada\",\"resolutionM\":30},"
                 + "\"years\":[{\"year\":2025,\"crop\":\"Soybeans\",\"code\":158,"
-                + "\"isCrop\":true,\"share\":0.967,\"classes\":[{\"code\":158,"
+                + "\"isCrop\":true,\"group\":\"soybeans\",\"groupLabel\":\"Soybeans\",\"share\":0.967,\"cropShare\":0.996,\"classes\":[{\"code\":158,"
                 + "\"name\":\"Soybeans\",\"isCrop\":true,\"share\":0.967}]}],"
                 + "\"rotation\":[\"Soybeans\"],\"distinctCrops\":[\"Soybeans\"],"
-                + "\"cropYears\":1,\"unavailableYears\":[],\"note\":\"Satellite classification\"}";
+                + "\"cropYears\":1,\"unavailableYears\":[],"
+                + "\"summary\":{\"yearsOfData\":15,\"firstYear\":2011,"
+                + "\"lastSeason\":{\"year\":2025,\"crop\":\"Soybeans\",\"group\":\"soybeans\",\"groupLabel\":\"Soybeans\"},"
+                + "\"pattern\":{\"kind\":\"rotation\",\"periodYears\":3,\"groups\":[\"corn\",\"soybeans\"],"
+                + "\"text\":\"A 3-year rotation: corn, corn, then soybeans.\"},"
+                + "\"expectedThisYear\":{\"year\":2026,\"group\":\"corn\",\"crop\":\"Corn\",\"confidence\":\"high\","
+                + "\"reason\":\"Soybeans in 2025, so the pattern points to corn this year.\"},"
+                + "\"flags\":{\"possiblyMerged\":false,\"mostlyNotCropland\":false},"
+                + "\"notes\":[\"The newest crop map is 2025 (last season); 2026 is not mapped yet.\"]},"
+                + "\"note\":\"Satellite classification\"}";
     }
 
     /**

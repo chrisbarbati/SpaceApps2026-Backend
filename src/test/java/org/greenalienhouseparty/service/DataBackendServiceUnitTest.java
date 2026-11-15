@@ -12,12 +12,17 @@ import static org.mockito.Mockito.when;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import org.greenalienhouseparty.client.DataBackendClient;
 import org.mockito.ArgumentCaptor;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
+import org.greenalienhouseparty.dto.FieldGreennessResponse;
+import org.greenalienhouseparty.dto.FieldSoilResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchRequest;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -26,9 +31,11 @@ import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -150,7 +157,7 @@ class DataBackendServiceUnitTest {
     void delegatesFieldSummaryRequest() {
         FieldSummaryRequest request = new FieldSummaryRequest();
         FieldSummaryResponse expected = new FieldSummaryResponse(
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
         when(client.fieldSummary(request)).thenReturn(expected);
 
         assertSame(expected, service.fieldSummary(request));
@@ -163,7 +170,7 @@ class DataBackendServiceUnitTest {
     @Test
     void delegatesFieldCropHistoryRequest() {
         CropHistoryResponse expected = new CropHistoryResponse(
-                "field-1", null, List.of(), List.of(), List.of(), 0, List.of(), "outside coverage");
+                "field-1", null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.fieldCropHistory("field-1")).thenReturn(expected);
 
         assertSame(expected, service.fieldCropHistory("field-1"));
@@ -178,7 +185,7 @@ class DataBackendServiceUnitTest {
     void delegatesCropHistoryRequest() {
         CropHistoryRequest request = new CropHistoryRequest();
         CropHistoryResponse expected = new CropHistoryResponse(
-                null, null, List.of(), List.of(), List.of(), 0, List.of(), "outside coverage");
+                null, null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.cropHistory(request)).thenReturn(expected);
 
         assertSame(expected, service.cropHistory(request));
@@ -237,6 +244,98 @@ class DataBackendServiceUnitTest {
     }
 
     /**
+     * Verifies that field greenness delegates to the client with the requested year.
+     */
+    @Test
+    void delegatesFieldGreenness() {
+        FieldGreennessResponse expected = new FieldGreennessResponse(
+                "field-1", 2024, null, List.of(), null, 0, 0, null, null);
+        when(client.fieldGreenness("field-1", 2024)).thenReturn(expected);
+
+        assertSame(expected, service.fieldGreenness("field-1", 2024));
+        verify(client).fieldGreenness("field-1", 2024);
+    }
+
+    /**
+     * Verifies that greenness for a submitted outline is delegated as a typed
+     * request.
+     */
+    @Test
+    void delegatesGreennessRequest() {
+        GreennessRequest request = new GreennessRequest();
+        FieldGreennessResponse expected = new FieldGreennessResponse(
+                null, 2025, null, List.of(), null, 0, 0, null, null);
+        when(client.greenness(request)).thenReturn(expected);
+
+        assertSame(expected, service.greenness(request));
+        verify(client).greenness(request);
+    }
+
+    /**
+     * Verifies that single-field soil delegates to the client.
+     */
+    @Test
+    void delegatesFieldSoil() {
+        FieldSoilResponse expected = new FieldSoilResponse("field-1", null, null, Map.of(), Map.of(), null, null);
+        when(client.fieldSoil("field-1")).thenReturn(expected);
+
+        assertSame(expected, service.fieldSoil("field-1"));
+        verify(client).fieldSoil("field-1");
+    }
+
+    /**
+     * Verifies that soil for a submitted outline is delegated as a typed request.
+     */
+    @Test
+    void delegatesSoilRequest() {
+        SoilRequest request = new SoilRequest();
+        FieldSoilResponse expected = new FieldSoilResponse(null, null, null, Map.of(), Map.of(), null, null);
+        when(client.soil(request)).thenReturn(expected);
+
+        assertSame(expected, service.soil(request));
+        verify(client).soil(request);
+    }
+
+    /**
+     * Verifies that soil for a large selection is de-duplicated, sent in ordered
+     * groups of 100 and combined with recomputed counts, and that invalid
+     * selections never reach the data backend.
+     */
+    @Test
+    void splitsFieldSoilsIntoGroupsOf100() {
+        List<String> ids = new ArrayList<>();
+        for (int n = 0; n < 150; n++) {
+            ids.add("field-" + n);
+        }
+        ids.add("field-3");
+        when(client.fieldSoils(anyList())).thenAnswer(call -> {
+            List<String> group = call.getArgument(0);
+            List<FieldSoilBatchResponse.Result> results = group.stream()
+                    .map(id -> id.equals("field-149")
+                            ? new FieldSoilBatchResponse.Result(id, FieldSoilBatchResponse.ERROR, null,
+                                    new FieldCropHistoryBatchResponse.Error(502, "SoilGrids is unavailable"))
+                            : new FieldSoilBatchResponse.Result(id, FieldSoilBatchResponse.OK,
+                                    new FieldSoilResponse(null, null, null, Map.of(), Map.of(), null, null), null))
+                    .toList();
+            return new FieldSoilBatchResponse(results, results.size(), 0, 0);
+        });
+
+        FieldSoilBatchResponse response = service.fieldSoils(new FieldSoilBatchRequest(ids));
+
+        ArgumentCaptor<List<String>> groups = ArgumentCaptor.captor();
+        verify(client, times(2)).fieldSoils(groups.capture());
+        assertEquals(List.of(100, 50), groups.getAllValues().stream().map(List::size).toList());
+        assertEquals(150, response.requested());
+        assertEquals(149, response.succeeded());
+        assertEquals(1, response.failed());
+        assertEquals("field-149", response.results().get(149).id());
+
+        assertThrows(InvalidRequestException.class, () -> service.fieldSoils(new FieldSoilBatchRequest(List.of())));
+        assertThrows(InvalidRequestException.class, () -> service.fieldSoils(new FieldSoilBatchRequest(List.of(" "))));
+        verify(client, times(2)).fieldSoils(anyList());
+    }
+
+    /**
      * Builds a data backend response for one group, failing {@code field-13}.
      *
      * @param ids the group's field IDs
@@ -248,7 +347,7 @@ class DataBackendServiceUnitTest {
                         ? new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.ERROR, null,
                                 new FieldCropHistoryBatchResponse.Error(404, "Field not found"))
                         : new FieldCropHistoryBatchResponse.Result(id, FieldCropHistoryBatchResponse.OK,
-                                new CropHistoryResponse(id, null, List.of(), List.of(), List.of(), 0, List.of(), null), null))
+                                new CropHistoryResponse(id, null, List.of(), List.of(), List.of(), 0, List.of(), null, null), null))
                 .toList();
         int ok = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
         return new FieldCropHistoryBatchResponse(results, results.size(), ok, results.size() - ok);

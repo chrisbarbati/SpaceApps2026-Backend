@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.greenalienhouseparty.client.DataBackendClient;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
@@ -13,12 +14,18 @@ import org.greenalienhouseparty.dto.FieldAreaResponse;
 import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchRequest;
 import org.greenalienhouseparty.dto.FieldCropHistoryBatchResponse;
+import org.greenalienhouseparty.dto.FieldGreennessResponse;
+import org.greenalienhouseparty.dto.FieldSoilBatchRequest;
+import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
+import org.greenalienhouseparty.dto.FieldSoilResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -209,6 +216,40 @@ public class DataBackendService {
         }
     }
 
+    /**
+     * Retrieves Sentinel-2 greenness through one growing season for a stored field.
+     *
+     * @param fieldId the field identifier
+     * @param year    growing season year, or {@code null} for the most recent season
+     * @return clear-sky NDVI observations and a season summary
+     */
+    public FieldGreennessResponse fieldGreenness(String fieldId, Integer year) {
+        log.trace("Entering fieldGreenness()");
+        log.debug("Requesting field greenness from the data backend");
+        try {
+            return client.fieldGreenness(fieldId, year);
+        } finally {
+            log.trace("Exiting fieldGreenness()");
+        }
+    }
+
+    /**
+     * Retrieves Sentinel-2 greenness through one growing season for a
+     * user-provided outline.
+     *
+     * @param request the polygon and optional growing season year
+     * @return clear-sky NDVI observations and a season summary
+     */
+    public FieldGreennessResponse greenness(GreennessRequest request) {
+        log.trace("Entering greenness()");
+        log.debug("Requesting greenness for a provided outline from the data backend");
+        try {
+            return client.greenness(request);
+        } finally {
+            log.trace("Exiting greenness()");
+        }
+    }
+
     /** Field IDs the data backend accepts per request. */
     static final int DATA_BACKEND_BATCH_SIZE = 100;
 
@@ -237,13 +278,10 @@ public class DataBackendService {
     public FieldCropHistoryBatchResponse fieldCropHistories(FieldCropHistoryBatchRequest request) {
         log.trace("Entering fieldCropHistories()");
         try {
-            List<String> ids = uniqueFieldIds(request);
+            List<String> ids = uniqueFieldIds(request == null ? null : request.ids());
             log.debug("Requesting crop history for {} fields in groups of {}", ids.size(), DATA_BACKEND_BATCH_SIZE);
-            List<FieldCropHistoryBatchResponse.Result> results = new ArrayList<>(ids.size());
-            for (int from = 0; from < ids.size(); from += DATA_BACKEND_BATCH_SIZE) {
-                List<String> group = ids.subList(from, Math.min(from + DATA_BACKEND_BATCH_SIZE, ids.size()));
-                results.addAll(client.fieldCropHistories(group).results());
-            }
+            List<FieldCropHistoryBatchResponse.Result> results =
+                    inGroups(ids, group -> client.fieldCropHistories(group).results());
             int succeeded = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
             return new FieldCropHistoryBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
         } finally {
@@ -254,16 +292,16 @@ public class DataBackendService {
     /**
      * Validates, trims and de-duplicates requested field IDs, keeping their order.
      *
-     * @param request the field IDs
+     * @param requested the requested field IDs
      * @return unique, trimmed field IDs
      * @throws InvalidRequestException when the IDs are missing, blank or too many
      */
-    private List<String> uniqueFieldIds(FieldCropHistoryBatchRequest request) {
-        if (request == null || request.ids() == null || request.ids().isEmpty()) {
+    private List<String> uniqueFieldIds(List<String> requested) {
+        if (requested == null || requested.isEmpty()) {
             throw new InvalidRequestException("ids must contain at least one field ID");
         }
         Set<String> unique = new LinkedHashSet<>();
-        for (String id : request.ids()) {
+        for (String id : requested) {
             if (id == null || id.isBlank()) {
                 throw new InvalidRequestException("ids must not contain blank field IDs");
             }
@@ -273,5 +311,78 @@ public class DataBackendService {
             throw new InvalidRequestException("ids must contain at most " + MAX_FIELDS_PER_REQUEST + " field IDs");
         }
         return List.copyOf(unique);
+    }
+
+    /**
+     * Calls the data backend for {@code ids} in groups of {@value #DATA_BACKEND_BATCH_SIZE}, one
+     * group at a time, and combines the results in order.
+     *
+     * @param ids  unique field IDs
+     * @param call the data backend call for one group
+     * @param <R>  the per-field result type
+     * @return the combined results, in the order of {@code ids}
+     */
+    private <R> List<R> inGroups(List<String> ids, Function<List<String>, List<R>> call) {
+        List<R> results = new ArrayList<>(ids.size());
+        for (int from = 0; from < ids.size(); from += DATA_BACKEND_BATCH_SIZE) {
+            results.addAll(call.apply(ids.subList(from, Math.min(from + DATA_BACKEND_BATCH_SIZE, ids.size()))));
+        }
+        return results;
+    }
+
+    /**
+     * Retrieves topsoil estimates for a stored field.
+     *
+     * @param fieldId the field identifier
+     * @return topsoil estimates for the field
+     */
+    public FieldSoilResponse fieldSoil(String fieldId) {
+        log.trace("Entering fieldSoil()");
+        log.debug("Requesting field soil from the data backend");
+        try {
+            return client.fieldSoil(fieldId);
+        } finally {
+            log.trace("Exiting fieldSoil()");
+        }
+    }
+
+    /**
+     * Retrieves topsoil estimates for a user-provided outline.
+     *
+     * @param request the polygon request
+     * @return topsoil estimates for the outline
+     */
+    public FieldSoilResponse soil(SoilRequest request) {
+        log.trace("Entering soil()");
+        log.debug("Requesting soil for a provided outline from the data backend");
+        try {
+            return client.soil(request);
+        } finally {
+            log.trace("Exiting soil()");
+        }
+    }
+
+    /**
+     * Retrieves topsoil estimates for several stored fields, trimming and
+     * de-duplicating IDs in order and sending them to the data backend in groups of
+     * {@value #DATA_BACKEND_BATCH_SIZE}. A field that fails is reported in its own
+     * result.
+     *
+     * @param request the field IDs
+     * @return one result per unique requested field, in request order
+     * @throws InvalidRequestException when no IDs, a blank ID, or more than
+     *                                 {@value #MAX_FIELDS_PER_REQUEST} unique IDs are given
+     */
+    public FieldSoilBatchResponse fieldSoils(FieldSoilBatchRequest request) {
+        log.trace("Entering fieldSoils()");
+        try {
+            List<String> ids = uniqueFieldIds(request == null ? null : request.ids());
+            log.debug("Requesting soil for {} fields in groups of {}", ids.size(), DATA_BACKEND_BATCH_SIZE);
+            List<FieldSoilBatchResponse.Result> results = inGroups(ids, group -> client.fieldSoils(group).results());
+            int succeeded = (int) results.stream().filter(FieldSoilBatchResponse.Result::isOk).count();
+            return new FieldSoilBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
+        } finally {
+            log.trace("Exiting fieldSoils()");
+        }
     }
 }
