@@ -127,6 +127,7 @@ class BackendApiIntegrationTest {
         registry.add("data.backend.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort());
         registry.add("statcan.wds.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/statcan");
         registry.add("geomet.wms.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/geomet");
+        registry.add("aafc.arcgis.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/aafc");
     }
 
     /**
@@ -504,6 +505,44 @@ class BackendApiIntegrationTest {
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
         assertTrue(paths.has("/fields/{field_id}/drought-indicators"));
         assertTrue(paths.has("/drought-indicators"));
+    }
+
+    /**
+     * Verifies land capability, drainage and soil indicators are read from
+     * Agriculture and Agri-Food Canada, that a point outside Canada returns
+     * no values, and that a service error and bad coordinates are reported.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsSoilLandscape() throws Exception {
+        HttpResponse<String> landscape = get("/soil-landscape?lat=44.3457&lon=-79.1569");
+        assertEquals(200, landscape.statusCode());
+        JsonNode body = json(landscape);
+        assertEquals("Canada", body.get("coverage").asString());
+        assertEquals("2", body.get("landCapability").get("classCode").asString());
+        assertEquals("S", body.get("landCapability").get("limitations").get(0).get("code").asString());
+        assertEquals("Well and moderately well drained", body.get("drainage").get("description").asString());
+        assertEquals(2, body.get("indicators").size());
+        JsonNode erosion = body.get("indicators").get(0);
+        assertEquals("erosionRisk", erosion.get("key").asString());
+        assertEquals(12.47, erosion.get("value").asDouble());
+        assertEquals("Moderate", erosion.get("rating").asString());
+        assertEquals(1981, erosion.get("change").get("fromYear").asInt());
+        assertEquals(2, erosion.get("history").size());
+        assertEquals("soilCoverDays", body.get("indicators").get(1).get("key").asString());
+        assertTrue(body.get("indicators").get(1).get("change").isNull());
+
+        JsonNode outside = json(get("/soil-landscape?lat=40.45&lon=-88.95"));
+        assertTrue(outside.get("coverage").isNull());
+        assertTrue(outside.get("landCapability").isNull());
+        assertEquals(0, outside.get("indicators").size());
+
+        HttpResponse<String> failed = get("/soil-landscape?lat=46.0&lon=-60.0");
+        assertEquals(502, failed.statusCode());
+        assertTrue(json(failed).get("detail").asString().contains("soil service is unavailable"));
+        assertEquals(422, get("/soil-landscape?lat=44.3&lon=200").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/soil-landscape"));
     }
 
     /**
@@ -928,6 +967,30 @@ class BackendApiIntegrationTest {
             response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
                     + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.startsWith("/aafc/")) {
+            String query = exchange.getRequestURI().getQuery();
+            String attributes;
+            if (query.contains("geometry=-88.95")) {
+                attributes = null;
+            } else if (query.contains("geometry=-60.0")) {
+                attributes = "error";
+            } else if (path.contains("cli_agr_cap_250k")) {
+                attributes = "{\"CLASS_A\":\"2\",\"SUBCLAS_A1\":\"S\",\"SUBCLAS_A2\":\" \"}";
+            } else if (path.contains("aafc_soc_drainage_fs")) {
+                attributes = "{\"DRAINAGE_CODE\":\"W\",\"DRAINAGE_PCNT\":69}";
+            } else if (path.contains("Risk_soil_erosion_integrated_2021")) {
+                attributes = "{\"ERI_1981_VAL\":14.464,\"ERI_1981_CLASS_EN\":\"Moderate\",\"ERI_2021_VAL\":12.467,"
+                        + "\"ERI_2021_CLASS_EN\":\"Moderate\",\"ERI_81_21_CHG_VAL\":-1.997,"
+                        + "\"ERI_81_21_CHG_CLASS_EN\":\"Decrease\"}";
+            } else if (path.contains("Soil_cover_days_2021")) {
+                attributes = "{\"SCD_2021_VAL\":287.4205,\"SCD_2021_CLASS_EN\":\"Moderate\"}";
+            } else {
+                attributes = null;
+            }
+            response = "error".equals(attributes)
+                    ? "{\"error\":{\"code\":400,\"message\":\"Invalid query\"}}"
+                    : "{\"objectIdFieldName\":\"OBJECTID\",\"fields\":[],\"features\":["
+                            + (attributes == null ? "" : "{\"attributes\":" + attributes + "}") + "]}";
         } else if (path.equals("/geomet")) {
             String query = exchange.getRequestURI().getQuery();
             geoMetQueries.add(query);
