@@ -176,6 +176,11 @@ class DataBackendClientIntegrationTest {
             assertEquals(4321.5, summary.climate().gddAnnualMedian());
             assertEquals(3533.2, summary.climate().chuAvailableMedian());
             assertEquals(125.0, summary.water().seasonEt0MmMedian());
+            assertEquals(2023, summary.yearly().years().getFirst().year());
+            assertEquals(3330.2, summary.yearly().years().getFirst().chuAvailable());
+            assertNull(summary.yearly().years().getFirst().gddAnnual());
+            assertEquals(3072.4, summary.yearly().percentiles().get("chu_available").p10());
+            assertEquals(10, summary.yearly().percentiles().get("chu_available").years());
             assertEquals("power", summary.weatherSource());
             assertEquals("ok", summary.layers().weather().status());
             assertEquals("power", summary.layers().weather().source());
@@ -318,6 +323,9 @@ class DataBackendClientIntegrationTest {
                 + "\"climate\":{\"gdd_annual_median\":4321.5,\"chu_available_median\":3533.2,"
                 + "\"precip_trend_mm_per_year\":2.1},"
                 + "\"water\":{\"season_et0_mm_median\":125.0},"
+                + "\"yearly\":{\"years\":[{\"year\":2023,\"chu_available\":3330.2,\"season_precip_mm\":461.6,"
+                + "\"gdd_annual\":null}],\"percentiles\":{\"chu_available\":{\"p10\":3072.4,\"p50\":3211.5,"
+                + "\"p90\":3446.9,\"years\":10},\"gdd_annual\":null}},"
                 + "\"frost\":{\"last_spring_frost\":\"04-20\",\"first_fall_frost\":\"10-10\","
                 + "\"last_spring_frost_doy\":110,\"first_fall_frost_doy\":283,"
                 + "\"frost_free_season_days\":173,\"spring_frost_years\":5,"

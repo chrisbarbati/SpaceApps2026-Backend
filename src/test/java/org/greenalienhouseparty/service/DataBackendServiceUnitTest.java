@@ -157,7 +157,7 @@ class DataBackendServiceUnitTest {
     void delegatesFieldSummaryRequest() {
         FieldSummaryRequest request = new FieldSummaryRequest();
         FieldSummaryResponse expected = new FieldSummaryResponse(
-                null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         when(client.fieldSummary(request)).thenReturn(expected);
 
         assertSame(expected, service.fieldSummary(request));

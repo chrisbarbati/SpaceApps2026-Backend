@@ -78,7 +78,7 @@ class PlannerInputNormalizerUnitTest {
         NormalizedField nothing = normalizer.toField("field-1", "soybeans", null, null, null);
         NormalizedField nullValues = normalizer.toField("field-1", "soybeans", soil(null, null),
                 new CropHistoryResponse(null, null, List.of(), List.of(), List.of(), 0, List.of(), null, null),
-                new FieldSummaryResponse(null, null, null, null, null, null, null, null, null, null, null, null, null));
+                new FieldSummaryResponse(null, null, null, null, null, null, null, null, null, null, null, null, null, null));
 
         for (NormalizedField normalized : List.of(nothing, nullValues)) {
             Field field = normalized.field();
@@ -155,7 +155,7 @@ class PlannerInputNormalizerUnitTest {
     private static FieldSummaryResponse summary(String erosionRating) {
         return new FieldSummaryResponse(
                 new FieldSummaryResponse.FieldInfo(new FieldSummaryResponse.Centroid(44.6, -79.4), 42.72),
-                "daymet", null, null, null, null, null, null, null, null,
+                "daymet", null, null, null, null, null, null, null, null, null,
                 new FieldSummaryResponse.TerrainInfo(250.0, 12.0, 3.1, 9.4, erosionRating, 0.1, 0.05),
                 null, null);
     }
