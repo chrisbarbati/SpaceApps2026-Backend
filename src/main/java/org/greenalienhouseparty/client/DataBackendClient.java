@@ -24,6 +24,7 @@ import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
 import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
+import org.greenalienhouseparty.dto.HlsAcquisitionResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
 import org.greenalienhouseparty.dto.SoilRequest;
@@ -286,6 +287,22 @@ public class DataBackendClient {
         } finally {
             log.trace("Exiting fieldSummary()");
         }
+    }
+
+    /**
+     * Starts or polls Python's nonblocking field-season acquisition with Java-selected dates.
+     *
+     * @param fieldId stored field identifier
+     * @param start first acquisition date
+     * @param end last acquisition date
+     * @param retry whether terminal failures should be retried
+     * @return acquired measurements and persisted progress
+     */
+    public HlsAcquisitionResponse fieldSeason(String fieldId, java.time.LocalDate start, java.time.LocalDate end, boolean retry) {
+        return execute(() -> restClient.get()
+                .uri(builder -> builder.path("/fields/{id}/season").queryParam("start", start)
+                        .queryParam("end", end).queryParam("retry", retry).build(fieldId))
+                .retrieve().body(HlsAcquisitionResponse.class));
     }
 
     /**
