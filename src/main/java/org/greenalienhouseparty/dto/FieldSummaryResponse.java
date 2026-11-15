@@ -6,7 +6,10 @@ import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import tools.jackson.databind.JsonNode;
 
@@ -20,6 +23,7 @@ import tools.jackson.databind.JsonNode;
  * {@code null} when the terrain provider failed while weather succeeded.</p>
  *
  * @param field      the field centroid and area
+ * @param weatherSource the weather dataset used, {@code daymet} or {@code power}
  * @param weatherCell the weather sampling coordinate
  * @param period     the analysis period
  * @param season     the growing-season definition
@@ -34,6 +38,7 @@ import tools.jackson.databind.JsonNode;
  */
 public record FieldSummaryResponse(
         FieldInfo field,
+        @Schema(allowableValues = {"daymet", "power"}) String weatherSource,
         WeatherCell weatherCell,
         PeriodInfo period,
         SeasonInfo season,
@@ -104,6 +109,8 @@ public record FieldSummaryResponse(
      *
      * @param gddAnnualMedian            median annual growing-degree days
      * @param gddSeasonMedian            median seasonal growing-degree days
+     * @param chuAvailableMedian         median Ontario crop heat units available each year, the scale used
+     *                                   to rate corn and soybean varieties; {@code null} south of the equator
      * @param growingSeasonPrecipMmMedian median growing-season precipitation
      * @param annualPrecipMmMedian       median annual precipitation
      * @param medianDrySpellDays         median longest dry spell
@@ -123,6 +130,7 @@ public record FieldSummaryResponse(
     public record ClimateInfo(
             @JsonProperty("gdd_annual_median") Double gddAnnualMedian,
             @JsonProperty("gdd_season_median") Double gddSeasonMedian,
+            @JsonProperty("chu_available_median") Double chuAvailableMedian,
             @JsonProperty("growing_season_precip_mm_median") Double growingSeasonPrecipMmMedian,
             @JsonProperty("annual_precip_mm_median") Double annualPrecipMmMedian,
             @JsonProperty("median_dry_spell_days") Double medianDrySpellDays,
@@ -262,10 +270,18 @@ public record FieldSummaryResponse(
     /**
      * Status of a single data layer.
      *
-     * @param status  the layer status, for example {@code "ok"} or {@code "error"}
-     * @param message the error message when the status is {@code "error"}
+     * @param status       the layer status, for example {@code "ok"} or {@code "error"}
+     * @param message      the error message when the status is {@code "error"}, or why the weather layer
+     *                     fell back to another dataset
+     * @param source       the dataset that answered, {@code daymet} or {@code power}; weather layer only
+     * @param fallbackFrom the dataset that failed before {@code source} was used; weather layer only, and
+     *                     only after a fallback
      */
-    public record LayerStatus(String status, String message) {
+    public record LayerStatus(
+            String status,
+            String message,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String source,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String fallbackFrom) {
     }
 
     /**

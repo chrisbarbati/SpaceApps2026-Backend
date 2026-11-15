@@ -31,9 +31,11 @@ import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -155,7 +157,7 @@ class DataBackendServiceUnitTest {
     void delegatesFieldSummaryRequest() {
         FieldSummaryRequest request = new FieldSummaryRequest();
         FieldSummaryResponse expected = new FieldSummaryResponse(
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
         when(client.fieldSummary(request)).thenReturn(expected);
 
         assertSame(expected, service.fieldSummary(request));
@@ -255,6 +257,21 @@ class DataBackendServiceUnitTest {
     }
 
     /**
+     * Verifies that greenness for a submitted outline is delegated as a typed
+     * request.
+     */
+    @Test
+    void delegatesGreennessRequest() {
+        GreennessRequest request = new GreennessRequest();
+        FieldGreennessResponse expected = new FieldGreennessResponse(
+                null, 2025, null, List.of(), null, 0, 0, null, null);
+        when(client.greenness(request)).thenReturn(expected);
+
+        assertSame(expected, service.greenness(request));
+        verify(client).greenness(request);
+    }
+
+    /**
      * Verifies that single-field soil delegates to the client.
      */
     @Test
@@ -264,6 +281,19 @@ class DataBackendServiceUnitTest {
 
         assertSame(expected, service.fieldSoil("field-1"));
         verify(client).fieldSoil("field-1");
+    }
+
+    /**
+     * Verifies that soil for a submitted outline is delegated as a typed request.
+     */
+    @Test
+    void delegatesSoilRequest() {
+        SoilRequest request = new SoilRequest();
+        FieldSoilResponse expected = new FieldSoilResponse(null, null, null, Map.of(), Map.of(), null, null);
+        when(client.soil(request)).thenReturn(expected);
+
+        assertSame(expected, service.soil(request));
+        verify(client).soil(request);
     }
 
     /**

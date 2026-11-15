@@ -3,6 +3,7 @@ package org.greenalienhouseparty.controller;
 import org.greenalienhouseparty.dto.FieldSoilBatchRequest;
 import org.greenalienhouseparty.dto.FieldSoilBatchResponse;
 import org.greenalienhouseparty.dto.FieldSoilResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.greenalienhouseparty.service.DataBackendService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
- * Topsoil estimates for stored fields, from ISRIC SoilGrids 2.0.
+ * Topsoil estimates for stored fields and user-provided outlines, from ISRIC
+ * SoilGrids 2.0.
  */
 @RestController
 @Tag(name = "Soil", description = "Topsoil texture, pH, organic matter and water holding for fields")
@@ -96,6 +98,32 @@ public class FieldSoilController {
             return service.fieldSoils(request);
         } finally {
             log.trace("Exiting fieldSoils()");
+        }
+    }
+
+    /**
+     * Retrieves topsoil estimates for a GeoJSON outline supplied by the caller,
+     * such as a field the farmer drew that is not in {@code GET /fields}.
+     *
+     * @param request the outline to inspect
+     * @return topsoil estimates with derived classes, without a field ID
+     */
+    @PostMapping("/soil")
+    @Operation(summary = "Topsoil of any outline",
+            description = SOIL_DESCRIPTION + " Accepts a GeoJSON Polygon, MultiPolygon or Feature, or a ring of "
+                    + "[longitude, latitude] positions. A new outline takes about 2 seconds; repeats return at once.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Topsoil estimates for the outline."),
+            @ApiResponse(responseCode = "422", description = "Invalid polygon or unsupported request property."),
+            @ApiResponse(responseCode = "502", description = "SoilGrids could not be reached or read.")
+    })
+    public FieldSoilResponse soil(@RequestBody SoilRequest request) {
+        log.trace("Entering soil()");
+        log.info("Handling POST /soil");
+        try {
+            return service.soil(request);
+        } finally {
+            log.trace("Exiting soil()");
         }
     }
 }

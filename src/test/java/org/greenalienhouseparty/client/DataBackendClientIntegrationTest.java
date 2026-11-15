@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -19,7 +20,9 @@ import org.greenalienhouseparty.config.RequestIdFilter;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.slf4j.MDC;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +49,8 @@ class DataBackendClientIntegrationTest {
     void deserializesAllDataEndpoints() throws Exception {
         AtomicReference<String> sentSummaryRequest = new AtomicReference<>();
         AtomicReference<String> sentCropHistoryRequest = new AtomicReference<>();
+        AtomicReference<String> sentSoilRequest = new AtomicReference<>();
+        AtomicReference<String> sentGreennessRequest = new AtomicReference<>();
         AtomicReference<String> receivedRequestId = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -81,6 +86,20 @@ class DataBackendClientIntegrationTest {
                     throw new RuntimeException(e);
                 }
                 response = cropHistoryResponse(null);
+            } else if (path.equals("/soil")) {
+                try {
+                    sentSoilRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                response = soilResponse();
+            } else if (path.equals("/greenness")) {
+                try {
+                    sentGreennessRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                response = greennessResponse();
             } else if (path.equals("/field-coverage")) {
                 response = "{\"region\":\"Ontario\",\"status\":\"complete\","
                         + "\"fields\":123,\"sourceUrl\":\"https://example.test/source\","
@@ -152,10 +171,16 @@ class DataBackendClientIntegrationTest {
             request.setPeriod(new FieldSummaryRequest.PeriodRequest("2023-01-01", "2023-12-31"));
             request.setSeason(new FieldSummaryRequest.SeasonRequest(List.of(5, 6, 7, 8, 9)));
             request.setWeatherGridDeg(0.05);
+            request.setWeatherSource("power");
             FieldSummaryResponse summary = client.fieldSummary(request);
             assertEquals(4321.5, summary.climate().gddAnnualMedian());
+            assertEquals(3533.2, summary.climate().chuAvailableMedian());
             assertEquals(125.0, summary.water().seasonEt0MmMedian());
+            assertEquals("power", summary.weatherSource());
             assertEquals("ok", summary.layers().weather().status());
+            assertEquals("power", summary.layers().weather().source());
+            assertNull(summary.layers().weather().fallbackFrom());
+            assertNull(summary.layers().terrain().source());
             assertNull(summary.terrain());
             assertEquals("NASA POWER", summary.source().getFirst().getSource());
             assertEquals(50, summary.source().getFirst().getExtra().get("spatial_resolution_km").asInt());
@@ -164,6 +189,7 @@ class DataBackendClientIntegrationTest {
             assertEquals("Polygon", sent.get("polygon").get("type").asString());
             assertEquals("2023-01-01", sent.get("period").get("start").asString());
             assertEquals(0.05, sent.get("weatherGridDeg").asDouble());
+            assertEquals("power", sent.get("weatherSource").asString());
 
             CropHistoryRequest cropRequest = new CropHistoryRequest();
             cropRequest.setPolygon(JSON.readTree(POLYGON));
@@ -172,6 +198,31 @@ class DataBackendClientIntegrationTest {
             assertEquals("Soybeans", cropHistory.rotation().getFirst());
             JsonNode sentCrop = JSON.readTree(sentCropHistoryRequest.get());
             assertEquals("Polygon", sentCrop.get("polygon").get("type").asString());
+
+            SoilRequest soilRequest = new SoilRequest();
+            soilRequest.setPolygon(JSON.readTree(POLYGON));
+            var soil = client.soil(soilRequest);
+            assertNull(soil.id());
+            assertEquals(6.82, soil.topsoil().ph());
+            assertEquals("Sandy loam", soil.derived().textureClass());
+            assertEquals(40, soil.derived().availableWaterMm());
+            assertEquals(250, soil.source().resolutionM());
+            assertEquals("Polygon", JSON.readTree(sentSoilRequest.get()).get("polygon").get("type").asString());
+
+            GreennessRequest greennessRequest = new GreennessRequest();
+            greennessRequest.setPolygon(JSON.readTree(POLYGON));
+            var greenness = client.greenness(greennessRequest);
+            assertNull(greenness.id());
+            assertEquals(2025, greenness.year());
+            assertEquals(0.78, greenness.summary().peakNdvi());
+            assertEquals(LocalDate.of(2025, 7, 14), greenness.observations().getFirst().date());
+            assertNull(greenness.summary().greenUpDate());
+            JsonNode sentGreenness = JSON.readTree(sentGreennessRequest.get());
+            assertEquals("Polygon", sentGreenness.get("polygon").get("type").asString());
+            assertTrue(!sentGreenness.has("year"));
+            greennessRequest.setYear(2024);
+            client.greenness(greennessRequest);
+            assertEquals(2024, JSON.readTree(sentGreennessRequest.get()).get("year").asInt());
         } finally {
             server.stop(0);
         }
@@ -259,11 +310,13 @@ class DataBackendClientIntegrationTest {
      */
     private static String summaryResponse() {
         return "{\"field\":{\"centroid\":{\"lat\":44.6,\"lon\":-79.4},\"areaHa\":1.2},"
+                + "\"weatherSource\":\"power\","
                 + "\"weatherCell\":{\"lat\":44.6,\"lon\":-79.4,\"gridDeg\":0.05},"
                 + "\"period\":{\"start\":\"20230101\",\"end\":\"20231231\"},"
                 + "\"season\":{\"months\":[5,6,7,8,9],\"crosses_year\":false,"
                 + "\"base_temp_c\":10,\"label\":\"May-Sep\"},"
-                + "\"climate\":{\"gdd_annual_median\":4321.5,\"precip_trend_mm_per_year\":2.1},"
+                + "\"climate\":{\"gdd_annual_median\":4321.5,\"chu_available_median\":3533.2,"
+                + "\"precip_trend_mm_per_year\":2.1},"
                 + "\"water\":{\"season_et0_mm_median\":125.0},"
                 + "\"frost\":{\"last_spring_frost\":\"04-20\",\"first_fall_frost\":\"10-10\","
                 + "\"last_spring_frost_doy\":110,\"first_fall_frost_doy\":283,"
@@ -275,9 +328,45 @@ class DataBackendClientIntegrationTest {
                 + "\"calendar_years\":1,\"years_with_temperature\":1,\"years_with_water_balance\":1,"
                 + "\"min_coverage\":0.9,\"missing_temperature_days\":0,\"missing_precip_days\":0,"
                 + "\"duplicate_days_dropped\":0,\"impossible_temperature_days\":0,\"impossible_precip_days\":0},"
-                + "\"terrain\":null,\"layers\":{\"weather\":{\"status\":\"ok\"},"
+                + "\"terrain\":null,\"layers\":{\"weather\":{\"status\":\"ok\",\"source\":\"power\"},"
                 + "\"terrain\":{\"status\":\"error\",\"message\":\"unavailable\"}},"
                 + "\"source\":[{\"source\":\"NASA POWER\",\"spatial_resolution_km\":50}]}";
+    }
+
+    /**
+     * Returns a representative topsoil response for an outline, which has no
+     * field ID.
+     *
+     * @return JSON for a Python topsoil response
+     */
+    private static String soilResponse() {
+        return "{\"topsoil\":{\"ph\":6.82,\"clayPct\":16.45,\"sandPct\":52.31,\"siltPct\":31.24,"
+                + "\"organicCarbonGPerKg\":28.7,\"nitrogenGPerKg\":2.76,\"bulkDensityGPerCm3\":1.48,"
+                + "\"cecCmolPerKg\":17.05},"
+                + "\"derived\":{\"textureClass\":\"Sandy loam\",\"organicMatterPct\":4.9,\"phClass\":\"Neutral\","
+                + "\"availableWaterMm\":40},"
+                + "\"depths\":{\"0-5cm\":{\"ph\":6.75,\"clayPct\":15.4},\"15-30cm\":{\"ph\":null}},"
+                + "\"units\":{\"ph\":\"pH\",\"availableWaterMm\":\"mm in 0-30 cm\"},"
+                + "\"source\":{\"name\":\"ISRIC SoilGrids 2.0\",\"url\":\"https://soilgrids.org\","
+                + "\"resolutionM\":250,\"license\":\"CC BY 4.0\"},\"note\":\"Estimates, not a soil test\"}";
+    }
+
+    /**
+     * Returns a representative greenness season for an outline, which has no
+     * field ID.
+     *
+     * @return JSON for a Python greenness response
+     */
+    private static String greennessResponse() {
+        return "{\"year\":2025,\"period\":{\"start\":\"2025-04-01\",\"end\":\"2025-11-14\"},"
+                + "\"observations\":[{\"date\":\"2025-07-14\",\"ndvi\":0.59,\"ndviP10\":0.41,\"ndviP90\":0.72,"
+                + "\"clearShare\":1.0}],"
+                + "\"summary\":{\"peakNdvi\":0.78,\"peakDate\":\"2025-08-30\",\"latestNdvi\":0.208,"
+                + "\"latestDate\":\"2025-11-06\",\"greenUpDate\":null},"
+                + "\"scenesChecked\":28,\"scenesUnreadable\":0,"
+                + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
+                + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\",\"resolutionM\":10,"
+                + "\"license\":\"Copernicus Sentinel data, free and open\"},\"note\":\"Mean NDVI\"}";
     }
 
     /**

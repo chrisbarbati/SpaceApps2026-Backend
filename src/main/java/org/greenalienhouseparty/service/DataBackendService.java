@@ -21,9 +21,11 @@ import org.greenalienhouseparty.dto.FieldSoilResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.greenalienhouseparty.exception.InvalidRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -231,6 +233,23 @@ public class DataBackendService {
         }
     }
 
+    /**
+     * Retrieves Sentinel-2 greenness through one growing season for a
+     * user-provided outline.
+     *
+     * @param request the polygon and optional growing season year
+     * @return clear-sky NDVI observations and a season summary
+     */
+    public FieldGreennessResponse greenness(GreennessRequest request) {
+        log.trace("Entering greenness()");
+        log.debug("Requesting greenness for a provided outline from the data backend");
+        try {
+            return client.greenness(request);
+        } finally {
+            log.trace("Exiting greenness()");
+        }
+    }
+
     /** Field IDs the data backend accepts per request. */
     static final int DATA_BACKEND_BATCH_SIZE = 100;
 
@@ -324,6 +343,22 @@ public class DataBackendService {
             return client.fieldSoil(fieldId);
         } finally {
             log.trace("Exiting fieldSoil()");
+        }
+    }
+
+    /**
+     * Retrieves topsoil estimates for a user-provided outline.
+     *
+     * @param request the polygon request
+     * @return topsoil estimates for the outline
+     */
+    public FieldSoilResponse soil(SoilRequest request) {
+        log.trace("Entering soil()");
+        log.debug("Requesting soil for a provided outline from the data backend");
+        try {
+            return client.soil(request);
+        } finally {
+            log.trace("Exiting soil()");
         }
     }
 

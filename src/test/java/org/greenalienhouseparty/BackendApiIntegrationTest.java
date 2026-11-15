@@ -56,6 +56,10 @@ class BackendApiIntegrationTest {
 
     private static final List<String> soilBatchBodies = new CopyOnWriteArrayList<>();
 
+    private static final AtomicReference<String> soilRequestBody = new AtomicReference<>();
+
+    private static final AtomicReference<String> greennessRequestBody = new AtomicReference<>();
+
     private static final AtomicBoolean fieldDataReady = new AtomicBoolean(true);
 
     private static final AtomicBoolean soilMoistureAvailable = new AtomicBoolean(true);
@@ -82,6 +86,8 @@ class BackendApiIntegrationTest {
         fieldDatabaseUp.set(true);
         greennessQuery.set(null);
         soilBatchBodies.clear();
+        soilRequestBody.set(null);
+        greennessRequestBody.set(null);
     }
 
     /**
@@ -194,7 +200,7 @@ class BackendApiIntegrationTest {
 
         String requestBody = "{\"polygon\":{\"type\":\"Polygon\",\"coordinates\":["
                 + "[[0,0],[1,0],[1,1],[0,1],[0,0]]]},\"period\":{"
-                + "\"start\":\"2023-01-01\",\"end\":\"2023-12-31\"}}";
+                + "\"start\":\"2023-01-01\",\"end\":\"2023-12-31\"},\"weatherSource\":\"auto\"}";
         HttpRequest summaryRequest = HttpRequest.newBuilder(URI.create(url("/field-summary")))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
@@ -203,6 +209,68 @@ class BackendApiIntegrationTest {
         assertEquals(200, summary.statusCode());
         assertEquals(4321.5, json(summary).get("climate").get("gdd_annual_median").asDouble());
         assertEquals("Polygon", JSON.readTree(summaryRequestBody.get()).get("polygon").get("type").asString());
+        assertEquals("auto", JSON.readTree(summaryRequestBody.get()).get("weatherSource").asString());
+        assertEquals("power", json(summary).get("weatherSource").asString());
+        assertEquals(3533.2, json(summary).get("climate").get("chu_available_median").asDouble());
+        JsonNode weatherLayer = json(summary).get("layers").get("weather");
+        assertEquals("power", weatherLayer.get("source").asString());
+        assertEquals("daymet", weatherLayer.get("fallbackFrom").asString());
+        assertEquals("NASA Daymet is unavailable", weatherLayer.get("message").asString());
+        JsonNode terrainLayer = json(summary).get("layers").get("terrain");
+        assertTrue(!terrainLayer.has("source") && !terrainLayer.has("fallbackFrom"));
+    }
+
+    /**
+     * Verifies that field summary requests without a weather source leave it out,
+     * so the data backend applies its own default.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void omitsUnsetWeatherSourceFromFieldSummaryRequest() throws Exception {
+        HttpResponse<String> summary = post("/field-summary",
+                "{\"polygon\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}");
+
+        assertEquals(200, summary.statusCode());
+        assertTrue(!JSON.readTree(summaryRequestBody.get()).has("weatherSource"));
+    }
+
+    /**
+     * Verifies topsoil and greenness for a caller-provided outline pass the
+     * request through, return the data backend's estimates without a field ID,
+     * and keep the data backend's validation errors.
+     *
+     * @throws Exception if a response cannot be decoded
+     */
+    @Test
+    void returnsSoilAndGreennessForAnOutline() throws Exception {
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+
+        HttpResponse<String> soil = post("/soil", "{\"polygon\":" + outline + "}");
+        assertEquals(200, soil.statusCode());
+        assertTrue(!json(soil).has("id"));
+        assertEquals("Sandy loam", json(soil).get("derived").get("textureClass").asString());
+        assertEquals(40, json(soil).get("derived").get("availableWaterMm").asInt());
+        assertEquals("Polygon", JSON.readTree(soilRequestBody.get()).get("polygon").get("type").asString());
+        HttpResponse<String> invalidSoil = post("/soil", "{\"polygon\":" + outline + ",\"extra\":true}");
+        assertEquals(422, invalidSoil.statusCode());
+        assertEquals("Extra inputs are not permitted", json(invalidSoil).get("detail").asString());
+
+        HttpResponse<String> greenness = post("/greenness", "{\"polygon\":" + outline + ",\"year\":2024}");
+        assertEquals(200, greenness.statusCode());
+        assertTrue(!json(greenness).has("id"));
+        assertEquals(2024, json(greenness).get("year").asInt());
+        assertEquals(0.77, json(greenness).get("summary").get("peakNdvi").asDouble());
+        assertEquals(2024, JSON.readTree(greennessRequestBody.get()).get("year").asInt());
+        assertEquals("Polygon", JSON.readTree(greennessRequestBody.get()).get("polygon").get("type").asString());
+        post("/greenness", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(greennessRequestBody.get()).has("year"));
+        HttpResponse<String> invalidGreenness = post("/greenness", "{\"polygon\":" + outline + ",\"extra\":true}");
+        assertEquals(422, invalidGreenness.statusCode());
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/soil"));
+        assertTrue(paths.has("/greenness"));
     }
 
     /**
@@ -588,17 +656,23 @@ class BackendApiIntegrationTest {
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
         } else if (path.equals("/fields/field-1/greenness")) {
             greennessQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
-            response = "{\"id\":\"field-1\",\"year\":2024,"
-                    + "\"period\":{\"start\":\"2024-04-01\",\"end\":\"2024-11-15\"},"
-                    + "\"observations\":[{\"date\":\"2024-07-14\",\"ndvi\":0.77,\"ndviP10\":0.66,"
-                    + "\"ndviP90\":0.84,\"clearShare\":1.0}],"
-                    + "\"summary\":{\"peakNdvi\":0.77,\"peakDate\":\"2024-07-14\",\"latestNdvi\":0.77,"
-                    + "\"latestDate\":\"2024-07-14\",\"greenUpDate\":null},"
-                    + "\"scenesChecked\":22,\"scenesUnreadable\":0,"
-                    + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
-                    + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\","
-                    + "\"resolutionM\":10,\"license\":\"Copernicus Sentinel data, free and open\"},"
-                    + "\"note\":\"Mean NDVI over the clear part of the field\"}";
+            response = "{\"id\":\"field-1\"," + greennessJson() + "}";
+        } else if (path.equals("/greenness")) {
+            greennessRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (greennessRequestBody.get().contains("\"extra\"")) {
+                status = 422;
+                response = "{\"detail\":\"Extra inputs are not permitted\"}";
+            } else {
+                response = "{" + greennessJson() + "}";
+            }
+        } else if (path.equals("/soil")) {
+            soilRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (soilRequestBody.get().contains("\"extra\"")) {
+                status = 422;
+                response = "{\"detail\":\"Extra inputs are not permitted\"}";
+            } else {
+                response = "{" + soilJson() + "}";
+            }
         } else if (path.equals("/fields/provider-error/greenness")) {
             status = 502;
             response = "{\"detail\":\"Earth Search (Sentinel-2 catalogue) is unavailable\"}";
@@ -646,13 +720,15 @@ class BackendApiIntegrationTest {
         } else if (path.equals("/field-summary")) {
             summaryRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             response = "{\"field\":{\"centroid\":{\"lat\":44.6,\"lon\":-79.4},\"areaHa\":1.2},"
+                    + "\"weatherSource\":\"power\","
                     + "\"weatherCell\":{\"lat\":44.6,\"lon\":-79.4,\"gridDeg\":0.05},"
                     + "\"period\":{\"start\":\"20230101\",\"end\":\"20231231\"},"
                     + "\"season\":{\"months\":[5,6,7,8,9],\"crosses_year\":false,"
                     + "\"base_temp_c\":10,\"label\":\"May-Sep\"},"
-                    + "\"climate\":{\"gdd_annual_median\":4321.5},"
+                    + "\"climate\":{\"gdd_annual_median\":4321.5,\"chu_available_median\":3533.2},"
                     + "\"water\":{\"season_et0_mm_median\":125},\"terrain\":null,"
-                    + "\"layers\":{\"weather\":{\"status\":\"ok\"},"
+                    + "\"layers\":{\"weather\":{\"status\":\"ok\",\"source\":\"power\",\"fallbackFrom\":\"daymet\","
+                    + "\"message\":\"NASA Daymet is unavailable\"},"
                     + "\"terrain\":{\"status\":\"error\"}},\"source\":[]}";
         } else {
             status = 404;
@@ -676,6 +752,25 @@ class BackendApiIntegrationTest {
                 + "\"units\":{\"ph\":\"pH\",\"availableWaterMm\":\"mm in 0-30 cm\"},"
                 + "\"source\":{\"name\":\"ISRIC SoilGrids 2.0\",\"url\":\"https://soilgrids.org\","
                 + "\"resolutionM\":250,\"license\":\"CC BY 4.0\"},\"note\":\"Estimates, not a soil test\"";
+    }
+
+    /**
+     * Creates a representative greenness season, without the surrounding braces.
+     *
+     * @return greenness JSON members
+     */
+    private static String greennessJson() {
+        return "\"year\":2024,"
+                + "\"period\":{\"start\":\"2024-04-01\",\"end\":\"2024-11-15\"},"
+                + "\"observations\":[{\"date\":\"2024-07-14\",\"ndvi\":0.77,\"ndviP10\":0.66,"
+                + "\"ndviP90\":0.84,\"clearShare\":1.0}],"
+                + "\"summary\":{\"peakNdvi\":0.77,\"peakDate\":\"2024-07-14\",\"latestNdvi\":0.77,"
+                + "\"latestDate\":\"2024-07-14\",\"greenUpDate\":null},"
+                + "\"scenesChecked\":22,\"scenesUnreadable\":0,"
+                + "\"source\":{\"name\":\"Copernicus Sentinel-2 L2A via Earth Search\","
+                + "\"collection\":\"sentinel-2-c1-l2a\",\"url\":\"https://example.test/stac\","
+                + "\"resolutionM\":10,\"license\":\"Copernicus Sentinel data, free and open\"},"
+                + "\"note\":\"Mean NDVI over the clear part of the field\"";
     }
 
     /**

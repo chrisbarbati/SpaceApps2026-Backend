@@ -22,9 +22,11 @@ import org.greenalienhouseparty.dto.FieldCoverageResponse;
 import org.greenalienhouseparty.dto.FieldSummaryRequest;
 import org.greenalienhouseparty.dto.FieldSummaryResponse;
 import org.greenalienhouseparty.dto.FieldsResponse;
+import org.greenalienhouseparty.dto.GreennessRequest;
 import org.greenalienhouseparty.dto.HealthResponse;
 import org.greenalienhouseparty.dto.ReadinessResponse;
 import org.greenalienhouseparty.dto.SoilMoistureResponse;
+import org.greenalienhouseparty.dto.SoilRequest;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -372,6 +374,29 @@ public class DataBackendClient {
     }
 
     /**
+     * Calls the data backend's greenness endpoint for a user-provided outline. The
+     * first request for an outline and season reads Sentinel-2 imagery and takes
+     * about 10 seconds.
+     *
+     * @param request the polygon and optional growing season year
+     * @return clear-sky NDVI observations and a season summary, without a field ID
+     */
+    public FieldGreennessResponse greenness(GreennessRequest request) {
+        log.trace("Entering greenness()");
+        log.debug("Calling Python data backend POST /greenness");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/greenness")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(FieldGreennessResponse.class));
+        } finally {
+            log.trace("Exiting greenness()");
+        }
+    }
+
+    /**
      * Calls the data backend's field soil endpoint.
      *
      * @param fieldId the field identifier
@@ -387,6 +412,27 @@ public class DataBackendClient {
                     .body(FieldSoilResponse.class));
         } finally {
             log.trace("Exiting fieldSoil()");
+        }
+    }
+
+    /**
+     * Calls the data backend's soil endpoint for a user-provided outline.
+     *
+     * @param request the polygon request
+     * @return topsoil estimates for the outline, without a field ID
+     */
+    public FieldSoilResponse soil(SoilRequest request) {
+        log.trace("Entering soil()");
+        log.debug("Calling Python data backend POST /soil");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/soil")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(FieldSoilResponse.class));
+        } finally {
+            log.trace("Exiting soil()");
         }
     }
 
