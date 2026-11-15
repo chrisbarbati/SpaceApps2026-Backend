@@ -70,6 +70,8 @@ class BackendApiIntegrationTest {
 
     private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
 
+    private static final List<String> geoMetQueries = new CopyOnWriteArrayList<>();
+
     private static final AtomicReference<String> vegetationQuery = new AtomicReference<>();
 
     private static final AtomicReference<String> vegetationRequestBody = new AtomicReference<>();
@@ -120,6 +122,7 @@ class BackendApiIntegrationTest {
         }
         registry.add("data.backend.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort());
         registry.add("statcan.wds.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/statcan");
+        registry.add("geomet.wms.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/geomet");
     }
 
     /**
@@ -417,6 +420,41 @@ class BackendApiIntegrationTest {
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
         assertTrue(paths.has("/fields/{field_id}/vegetation-history"));
         assertTrue(paths.has("/vegetation-history"));
+    }
+
+    /**
+     * Verifies the seasonal outlook is read from Environment Canada for the
+     * newest run, that a point without an outlook returns no periods, and
+     * that bad coordinates are rejected.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsSeasonalOutlook() throws Exception {
+        geoMetQueries.clear();
+        HttpResponse<String> outlook = get("/seasonal-outlook?lat=44.35&lon=-79.16");
+        assertEquals(200, outlook.statusCode());
+        JsonNode body = json(outlook);
+        assertEquals("2026-11", body.get("issued").asString());
+        assertEquals(3, body.get("periods").size());
+        JsonNode first = body.get("periods").get(0);
+        assertEquals("Nov 2026 - Jan 2027", first.get("label").asString());
+        assertEquals(61.3, first.get("temperature").get("abovePct").asDouble());
+        assertEquals(13.3, first.get("precipitation").get("belowPct").asDouble());
+        assertEquals("above", first.get("temperature").get("mostLikely").asString());
+        assertEquals("2027-07", body.get("periods").get(2).get("endMonth").asString());
+        assertEquals(19, geoMetQueries.size());
+        assertTrue(geoMetQueries.stream().anyMatch(q -> q.contains("layers=CanSIPS_100km_PrecipAccum-ProbBelowNormal-2m_PT3M")
+                && q.contains("time=2027-05-01T00:00:00Z") && q.contains("dim_reference_time=2026-11-01T00:00:00Z")
+                && q.contains("request=GetFeatureInfo") && q.contains("bbox=44.3000,-79.2100,44.4000,-79.1100")));
+
+        JsonNode nowhere = json(get("/seasonal-outlook?lat=0&lon=0"));
+        assertTrue(nowhere.get("issued").isNull());
+        assertEquals(0, nowhere.get("periods").size());
+
+        assertEquals(422, get("/seasonal-outlook?lat=95&lon=0").statusCode());
+        assertEquals(422, get("/seasonal-outlook?lat=44.35").statusCode());
+        assertTrue(json(get("/v3/api-docs")).get("paths").has("/seasonal-outlook"));
     }
 
     /**
@@ -841,6 +879,20 @@ class BackendApiIntegrationTest {
             response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
                     + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.equals("/geomet")) {
+            String query = exchange.getRequestURI().getQuery();
+            geoMetQueries.add(query);
+            if (query.contains("bbox=-0.0500")) {
+                response = "{\"type\":\"FeatureCollection\",\"features\":[]}";
+            } else {
+                String time = query.contains("time=2027-02") ? "2027-02-01T00:00:00Z"
+                        : query.contains("time=2027-05") ? "2027-05-01T00:00:00Z" : "2026-11-01T00:00:00Z";
+                double value = query.contains("ProbAbove") ? 61.25 : query.contains("ProbNear") ? 25.5 : 13.25;
+                response = "{\"type\":\"FeatureCollection\",\"layer\":\"x\",\"features\":[{\"type\":\"Feature\","
+                        + "\"geometry\":{\"type\":\"Point\",\"coordinates\":[-79.0,44.5]},\"properties\":{\"value\":"
+                        + value + ",\"class\":\"60 - 70%\",\"time\":\"" + time
+                        + "\",\"dim_reference_time\":\"2026-11-01T00:00:00Z\"}}]}";
+            }
         } else if (path.equals("/statcan/getDataFromCubePidCoordAndLatestNPeriods")) {
             if (!statCanUp.get()) {
                 status = 503;
