@@ -68,6 +68,12 @@ class BackendApiIntegrationTest {
 
     private static final AtomicReference<String> agroWeatherRequestBody = new AtomicReference<>();
 
+    private static final AtomicBoolean statCanUp = new AtomicBoolean(true);
+
+    private static final AtomicReference<String> cropCalendarQuery = new AtomicReference<>();
+
+    private static final AtomicReference<String> cropCalendarRequestBody = new AtomicReference<>();
+
     private static HttpServer dataBackend;
 
     @LocalServerPort
@@ -109,6 +115,7 @@ class BackendApiIntegrationTest {
             throw new IllegalStateException("Unable to start the local data backend stub", e);
         }
         registry.add("data.backend.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort());
+        registry.add("statcan.wds.url", () -> "http://127.0.0.1:" + dataBackend.getAddress().getPort() + "/statcan");
     }
 
     /**
@@ -278,21 +285,90 @@ class BackendApiIntegrationTest {
     }
 
     /**
-     * Verifies crop reference data is served with its requirements, estimates
-     * and sources, and is listed in the generated OpenAPI document.
+     * Verifies crop reference data and Statistics Canada market data are
+     * served, and that a Statistics Canada outage and an unknown province are
+     * reported with their own statuses.
      *
      * @throws Exception if a request or response fails
      */
     @Test
-    void returnsCropReference() throws Exception {
+    void returnsCropReferenceAndMarketData() throws Exception {
         JsonNode reference = json(get("/crops/reference"));
         assertEquals("FAO ECOCROP", reference.get("sources").get("requirements").get("name").asString());
         assertEquals("Zea mays", reference.get("crops").get(0).get("scientificName").asString());
         assertEquals(4.5, reference.get("crops").get(0).get("requirements").get("phMin").asDouble());
         assertEquals(170.0, reference.get("crops").get(0).get("estimates").get("nDemandKgHa").asDouble());
 
+        statCanUp.set(false);
+        HttpResponse<String> outage = get("/crops/market?province=QC");
+        assertEquals(502, outage.statusCode());
+        assertEquals("Statistics Canada is unavailable", json(outage).get("detail").asString());
+        statCanUp.set(true);
+
+        HttpResponse<String> market = get("/crops/market");
+        assertEquals(200, market.statusCode());
+        JsonNode body = json(market);
+        assertEquals("ON", body.get("province").asString());
+        assertEquals(9, body.get("crops").size());
+        JsonNode corn = body.get("crops").get(0);
+        assertEquals("corn", corn.get("cropId").asString());
+        assertEquals(11000.0, corn.get("yieldKgPerHa").asDouble());
+        assertEquals(2025, corn.get("yieldYear").asInt());
+        assertEquals("2026-09", corn.get("priceMonth").asString());
+        assertEquals(2750.0, corn.get("grossRevenuePerHa").asDouble());
+        JsonNode grapes = body.get("crops").get(8);
+        assertTrue(grapes.get("yieldKgPerHa").isNull());
+        assertEquals(1, grapes.get("notes").size());
+
+        assertEquals(422, get("/crops/market?province=ZZ").statusCode());
         JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/crops/market"));
         assertTrue(paths.has("/crops/reference"));
+    }
+
+    /**
+     * Verifies the crop calendar is re-exposed for a stored field and for an
+     * outline, passing the optional system and crops through and keeping
+     * nulls and upstream validation errors.
+     *
+     * @throws Exception if a request or response fails
+     */
+    @Test
+    void returnsCropCalendar() throws Exception {
+        HttpResponse<String> field = get("/fields/field-1/crop-calendar?system=irrigated&crops=corn,winter_wheat");
+        assertEquals(200, field.statusCode());
+        assertEquals("system=irrigated&crops=corn,winter_wheat", cropCalendarQuery.get());
+        JsonNode body = json(field);
+        assertEquals("field-1", body.get("id").asString());
+        assertEquals(44.25, body.get("cell").get("lat").asDouble());
+        JsonNode corn = body.get("crops").get(0);
+        assertEquals("corn", corn.get("crop").asString());
+        assertEquals(121, corn.get("plantingDay").asInt());
+        assertEquals("05-01", corn.get("plantingDate").asString());
+        assertEquals(203, corn.get("offSeasonDays").asInt());
+        assertTrue(!corn.get("crossesNewYear").asBoolean());
+        assertTrue(body.get("crops").get(1).get("crossesNewYear").asBoolean());
+        assertTrue(body.get("crops").get(2).get("plantingDay").isNull());
+        assertEquals("10.5281/zenodo.5062513", body.get("source").get("doi").asString());
+        get("/fields/field-1/crop-calendar");
+        assertEquals("null", cropCalendarQuery.get());
+
+        String outline = "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}";
+        HttpResponse<String> posted = post("/crop-calendar",
+                "{\"polygon\":" + outline + ",\"system\":\"rainfed\",\"crops\":[\"corn\"]}");
+        assertEquals(200, posted.statusCode());
+        assertTrue(!json(posted).has("id"));
+        assertEquals("corn", JSON.readTree(cropCalendarRequestBody.get()).get("crops").get(0).asString());
+        post("/crop-calendar", "{\"polygon\":" + outline + "}");
+        assertTrue(!JSON.readTree(cropCalendarRequestBody.get()).has("system"));
+        assertTrue(!JSON.readTree(cropCalendarRequestBody.get()).has("crops"));
+        HttpResponse<String> invalid = post("/crop-calendar", "{\"polygon\":" + outline + ",\"crops\":[\"oats\"]}");
+        assertEquals(422, invalid.statusCode());
+        assertEquals("unknown crops: oats", json(invalid).get("detail").asString());
+
+        JsonNode paths = json(get("/v3/api-docs")).get("paths");
+        assertTrue(paths.has("/fields/{field_id}/crop-calendar"));
+        assertTrue(paths.has("/crop-calendar"));
     }
 
     /**
@@ -717,6 +793,39 @@ class BackendApiIntegrationTest {
             response = "{\"results\":[{\"id\":\"field-1\",\"status\":\"ok\",\"soil\":{" + soilJson() + "}},"
                     + "{\"id\":\"missing\",\"status\":\"error\",\"error\":{\"code\":404,\"detail\":\"Field not found\"}}],"
                     + "\"requested\":2,\"succeeded\":1,\"failed\":1}";
+        } else if (path.equals("/statcan/getDataFromCubePidCoordAndLatestNPeriods")) {
+            if (!statCanUp.get()) {
+                status = 503;
+                response = "{\"message\":\"down\"}";
+            } else {
+                StringBuilder results = new StringBuilder();
+                for (JsonNode series : JSON.readTree(exchange.getRequestBody().readAllBytes())) {
+                    int productId = series.get("productId").asInt();
+                    String coordinate = series.get("coordinate").asString();
+                    String points = productId == 32100359
+                            ? "{\"refPer\":\"2025-01-01\",\"value\":11000.0,\"decimals\":0},"
+                                    + "{\"refPer\":\"2026-01-01\",\"value\":null,\"decimals\":0}"
+                            : "{\"refPer\":\"2026-09-01\",\"value\":250.0,\"decimals\":2}";
+                    if (!results.isEmpty()) {
+                        results.append(',');
+                    }
+                    results.append("{\"status\":\"SUCCESS\",\"object\":{\"responseStatusCode\":0,\"productId\":")
+                            .append(productId).append(",\"coordinate\":\"").append(coordinate)
+                            .append("\",\"vectorId\":1,\"vectorDataPoint\":[").append(points).append("]}}");
+                }
+                response = "[" + results + "]";
+            }
+        } else if (path.equals("/fields/field-1/crop-calendar")) {
+            cropCalendarQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
+            response = "{\"id\":\"field-1\"," + cropCalendarJson() + "}";
+        } else if (path.equals("/crop-calendar")) {
+            cropCalendarRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (cropCalendarRequestBody.get().contains("\"oats\"")) {
+                status = 422;
+                response = "{\"detail\":\"unknown crops: oats\"}";
+            } else {
+                response = "{" + cropCalendarJson() + "}";
+            }
         } else if (path.equals("/fields/field-1/agro-weather")) {
             agroWeatherQuery.set(String.valueOf(exchange.getRequestURI().getQuery()));
             response = "{\"id\":\"field-1\"," + agroWeatherJson() + "}";
@@ -804,6 +913,28 @@ class BackendApiIntegrationTest {
             response = "{\"detail\":\"Not found\"}";
         }
         respond(exchange, status, response);
+    }
+
+    /**
+     * Creates a representative crop calendar body, without the surrounding braces.
+     *
+     * @return crop calendar JSON members
+     */
+    private static String cropCalendarJson() {
+        return "\"location\":{\"lat\":44.345697,\"lon\":-79.156938},"
+                + "\"cell\":{\"lat\":44.25,\"lon\":-79.25,\"sizeDeg\":0.5},\"system\":\"rainfed\","
+                + "\"crops\":[{\"crop\":\"corn\",\"label\":\"Corn\",\"plantingDay\":121,\"plantingDate\":\"05-01\","
+                + "\"maturityDay\":283,\"maturityDate\":\"10-10\",\"growingSeasonDays\":162,\"offSeasonDays\":203,"
+                + "\"crossesNewYear\":false,\"dataSource\":\"MIRCA2000\"},"
+                + "{\"crop\":\"winter_wheat\",\"label\":\"Winter wheat\",\"plantingDay\":284,\"plantingDate\":\"10-11\","
+                + "\"maturityDay\":208,\"maturityDate\":\"07-27\",\"growingSeasonDays\":289,\"offSeasonDays\":76,"
+                + "\"crossesNewYear\":true,\"dataSource\":\"SAGE\"},"
+                + "{\"crop\":\"cassava\",\"label\":\"Cassava\",\"plantingDay\":null,\"plantingDate\":null,"
+                + "\"maturityDay\":null,\"maturityDate\":null,\"growingSeasonDays\":null,\"offSeasonDays\":null,"
+                + "\"crossesNewYear\":null,\"dataSource\":null}],"
+                + "\"source\":{\"name\":\"GGCMI Phase 3 crop calendar\",\"url\":\"https://zenodo.org/records/5062513\","
+                + "\"doi\":\"10.5281/zenodo.5062513\",\"version\":\"1.01\",\"resolutionDeg\":0.5,"
+                + "\"license\":\"CC BY 4.0\",\"citation\":\"Jaegermeyr et al. (2021)\"},\"note\":\"Usual dates\"";
     }
 
     /**
