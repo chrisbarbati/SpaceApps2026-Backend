@@ -54,23 +54,27 @@ public record CropOptimizationResponse(
     /**
      * Crop assigned to one future calendar year.
      *
-     * <p>The id, score and rationale fields are present only when the planner
+     * <p>The id, score, rationale and reasons fields are present only when the planner
      * computes them; the random placeholder leaves them out.</p>
      *
      * @param year        calendar year of the assignment
      * @param crop        selected crop display name
      * @param cropId      selected crop identifier from {@code GET /crops}
      * @param soilScore   soil score of this choice; higher is better for the soil
+     * @param reliability how well the field's climate and soil suit the crop, 0 (unsuited) to 1 (well suited)
      * @param incomePerHa estimated net margin in dollars per hectare
-     * @param rationale   the score components in words
+     * @param rationale   the score components as numbers, for checking the calculation
+     * @param reasons     plain-language sentences saying why the crop was chosen and what to watch for
      */
     public record PlannedYear(
             Integer year,
             String crop,
             @JsonInclude(JsonInclude.Include.NON_NULL) String cropId,
             @JsonInclude(JsonInclude.Include.NON_NULL) Double soilScore,
+            @JsonInclude(JsonInclude.Include.NON_NULL) Double reliability,
             @JsonInclude(JsonInclude.Include.NON_NULL) Double incomePerHa,
-            @JsonInclude(JsonInclude.Include.NON_NULL) String rationale) {
+            @JsonInclude(JsonInclude.Include.NON_NULL) String rationale,
+            @JsonInclude(JsonInclude.Include.NON_NULL) List<String> reasons) {
 
         /**
          * Creates an assignment without scores, as the random placeholder does.
@@ -79,7 +83,7 @@ public record CropOptimizationResponse(
          * @param crop selected crop display name
          */
         public PlannedYear(Integer year, String crop) {
-            this(year, crop, null, null, null, null);
+            this(year, crop, null, null, null, null, null, null);
         }
     }
 }

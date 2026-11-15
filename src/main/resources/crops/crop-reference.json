@@ -3,12 +3,17 @@
     "requirements": {
       "name": "FAO ECOCROP",
       "url": "https://gaez.fao.org/pages/ecocrop",
-      "note": "Crop environmental requirements. pH, temperature and rainfall are given as an optimal range and an absolute (tolerated) range; cycle is days from planting to harvest. Extracted 2026-11-14 from the public EcoCrop_DB.csv copy at github.com/OpenCLIM/ecocrop."
+      "note": "Crop environmental requirements. pH, temperature and rainfall are given as an optimal range and an absolute (tolerated) range; cycle is days from planting to harvest. Life span, soil texture (heavy, medium, light, organic) and drainage (poorly, well, excessive) are given as the optimal classes and every tolerated class. Extracted 2026-11-14 and 2026-11-15 from the public EcoCrop_DB.csv copy at github.com/OpenCLIM/ecocrop. Corn's life span, texture and drainage are blank under Zea mays and are taken from the Zea mays ssp. mays entry."
     },
     "estimates": {
       "name": "Illustrative estimates",
       "url": null,
       "note": "Nitrogen fixed and demanded, residue score, months of cover, net margin and disease susceptibility are placeholders chosen to be plausible for southern Ontario. They are not sourced and need agronomist review."
+    },
+    "notYetSourced": {
+      "name": "Not yet sourced",
+      "url": null,
+      "note": "seasonWaterNeedMm (water a crop needs over its season) and heatUnitsRequired (crop heat units to mature) are empty for every crop. The planner has terms for them that stay out of the score until these values are sourced, for example from FAO-56 crop coefficients and provincial crop-heat-unit ratings."
     }
   },
   "crops": [
@@ -33,7 +38,27 @@
         "cycleMinDays": 65,
         "cycleMaxDays": 365,
         "killingTempC": null,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium",
+          "organic"
+        ],
+        "textureTolerated": [
+          "medium",
+          "organic",
+          "heavy",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well",
+          "excessive"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -65,7 +90,28 @@
         "cycleMinDays": 75,
         "cycleMaxDays": 180,
         "killingTempC": null,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium",
+          "organic"
+        ],
+        "textureTolerated": [
+          "medium",
+          "organic",
+          "heavy",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well",
+          "poorly",
+          "excessive"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 120,
@@ -97,7 +143,25 @@
         "cycleMinDays": 90,
         "cycleMaxDays": 250,
         "killingTempC": 0,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium",
+          "organic"
+        ],
+        "textureTolerated": [
+          "medium",
+          "organic",
+          "heavy"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -129,7 +193,24 @@
         "cycleMinDays": 90,
         "cycleMaxDays": 240,
         "killingTempC": 0,
-        "rootingDepth": "deep (>150 cm)"
+        "rootingDepth": "deep (>150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium"
+        ],
+        "textureTolerated": [
+          "medium",
+          "heavy",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -161,7 +242,26 @@
         "cycleMinDays": 110,
         "cycleMaxDays": 270,
         "killingTempC": -1,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "heavy",
+          "medium",
+          "light"
+        ],
+        "textureTolerated": [
+          "heavy",
+          "medium",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -193,7 +293,25 @@
         "cycleMinDays": 85,
         "cycleMaxDays": 340,
         "killingTempC": -6,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium",
+          "light"
+        ],
+        "textureTolerated": [
+          "medium",
+          "light",
+          "heavy"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -225,7 +343,27 @@
         "cycleMinDays": 90,
         "cycleMaxDays": 160,
         "killingTempC": 0,
-        "rootingDepth": "medium (50-150 cm)"
+        "rootingDepth": "medium (50-150 cm)",
+        "lifeSpan": "annual",
+        "textureOptimal": [
+          "medium",
+          "organic"
+        ],
+        "textureTolerated": [
+          "medium",
+          "organic",
+          "heavy",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well",
+          "excessive"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,
@@ -257,7 +395,25 @@
         "cycleMinDays": 100,
         "cycleMaxDays": 210,
         "killingTempC": 0,
-        "rootingDepth": "deep (>150 cm)"
+        "rootingDepth": "deep (>150 cm)",
+        "lifeSpan": "perennial",
+        "textureOptimal": [
+          "medium",
+          "light"
+        ],
+        "textureTolerated": [
+          "medium",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well",
+          "excessive"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 150,
@@ -289,7 +445,26 @@
         "cycleMinDays": 160,
         "cycleMaxDays": 270,
         "killingTempC": -3,
-        "rootingDepth": "deep (>150 cm)"
+        "rootingDepth": "deep (>150 cm)",
+        "lifeSpan": "perennial",
+        "textureOptimal": [
+          "medium",
+          "organic"
+        ],
+        "textureTolerated": [
+          "medium",
+          "organic",
+          "heavy",
+          "light"
+        ],
+        "drainageOptimal": [
+          "well"
+        ],
+        "drainageTolerated": [
+          "well"
+        ],
+        "seasonWaterNeedMm": null,
+        "heatUnitsRequired": null
       },
       "estimates": {
         "nFixKgHa": 0,

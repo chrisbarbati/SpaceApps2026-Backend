@@ -48,9 +48,13 @@ public class CropOptimizationController {
     @Operation(summary = "Generate five-year crop plans",
             description = "Returns a five-year plan for each field from the farmer's growable crops. Give crops by "
                     + "their id from GET /crops (display names are also accepted). The planner field names the "
-                    + "implementation used: random-placeholder (default) picks crops at random; dynamic-soil-health "
-                    + "optimizes soil health from soil, terrain and crop-history data and adds soil scores, income "
-                    + "and the assumptions made for missing data. Fields are planned one after another and the "
+                    + "implementation used: random-placeholder (default) picks crops at random; "
+                    + "dynamic-soil-reliability optimizes soil health and crop reliability from soil, terrain, "
+                    + "climate, crop-calendar, regional soil and crop-history data, and adds soil scores, a "
+                    + "reliability value from 0 to 1, income, plain-language reasons for each choice and the "
+                    + "assumptions made for missing data; mock-demonstration returns varied illustrative plans "
+                    + "for demonstrations that are not calculated from field data. Fields are planned one after "
+                    + "another and the "
                     + "optimizer can take several seconds per field the first time. "
                     + "The result is not an agronomic recommendation and must be reviewed locally.",
             requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(

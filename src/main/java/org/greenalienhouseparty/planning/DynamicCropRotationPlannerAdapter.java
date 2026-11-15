@@ -23,7 +23,8 @@ import org.springframework.stereotype.Component;
  * <p>Active when {@code crop.planner.strategy=dynamic}. For each field it looks
  * up the growable crops, builds the planner's field input from data backend
  * responses, runs the optimizer and reports the plan in the API's response
- * shape, including the scores and any assumptions made for missing data.</p>
+ * shape, including the scores, the reasons for each choice in plain language
+ * and any assumptions made for missing data.</p>
  */
 @Component
 @ConditionalOnProperty(name = CropRotationPlanner.STRATEGY_PROPERTY, havingValue = "dynamic")
@@ -31,12 +32,18 @@ public class DynamicCropRotationPlannerAdapter implements CropRotationPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicCropRotationPlannerAdapter.class);
 
-    /** Soil health only, the default priority until farmers can state their own. */
-    static final Weights DEFAULT_WEIGHTS = new Weights(1.0, 0.0);
+    /**
+     * Soil health first, with crop reliability second, the default priority until farmers can state their own.
+     * Income has no weight because the crop margins are still estimates.
+     */
+    static final Weights DEFAULT_WEIGHTS = new Weights(0.7, 0.0, 0.3);
 
-    private static final String DISCLAIMER = "Plan optimized for soil health using example crop figures and "
-            + "satellite and model estimates of soil, terrain and crop history. It does not yet consider weather, "
-            + "water or markets. Treat it as a starting point and review any planting decision with local experts.";
+    private static final String DISCLAIMER = "Plan optimized mainly for soil health, and for how reliably each crop "
+            + "suits the field's climate record and soil. It uses satellite and model estimates of soil, terrain, "
+            + "climate and crop history, regional soil maps, and crop requirements from FAO ECOCROP. Nitrogen, "
+            + "residue, disease and income figures for each crop are estimates, not sourced data. It does not yet "
+            + "consider each crop's water use or markets. Treat it as a starting point and review any planting "
+            + "decision with local experts.";
 
     private final CropRepository crops;
 
@@ -75,7 +82,7 @@ public class DynamicCropRotationPlannerAdapter implements CropRotationPlanner {
     }
 
     /**
-     * Plans five years for one field, optimizing soil health.
+     * Plans five years for one field, optimizing soil health and crop reliability.
      *
      * @param field field-specific crop-planning context
      * @return five future crop assignments with scores and assumptions
@@ -103,8 +110,10 @@ public class DynamicCropRotationPlannerAdapter implements CropRotationPlanner {
                             year.cropName(),
                             year.cropId(),
                             round(year.soilScore(), 3),
+                            round(year.reliability(), 2),
                             round(year.incomePerHa(), 2),
-                            year.rationale()))
+                            year.rationale(),
+                            year.reasons()))
                     .toList();
             return new CropOptimizationResponse.FieldPlan(
                     field.fieldId(),
@@ -123,7 +132,7 @@ public class DynamicCropRotationPlannerAdapter implements CropRotationPlanner {
      */
     @Override
     public String id() {
-        return "dynamic-soil-health";
+        return "dynamic-soil-reliability";
     }
 
     /**

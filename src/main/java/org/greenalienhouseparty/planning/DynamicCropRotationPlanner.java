@@ -1,14 +1,18 @@
 package org.greenalienhouseparty.planning;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import org.greenalienhouseparty.exception.CropOptimizationValidationException;
 import org.greenalienhouseparty.planning.model.Crop;
+import org.greenalienhouseparty.planning.model.CropReference;
 import org.greenalienhouseparty.planning.model.Field;
+import org.greenalienhouseparty.planning.model.FieldConditions;
 import org.greenalienhouseparty.planning.model.FieldPlan;
 import org.greenalienhouseparty.planning.model.Weights;
 import org.greenalienhouseparty.planning.model.YearPlan;
@@ -20,7 +24,19 @@ import org.greenalienhouseparty.planning.model.YearPlan;
  * the best total score, by dynamic programming over the state "crop grown last
  * year, crop grown two years ago". Each year's score blends a soil score
  * (disease pressure from repeating a crop family, nitrogen balance, residue
- * and erosion cover) with income, using the caller's {@link Weights}.</p>
+ * and erosion cover), a reliability score (how well the field's climate record
+ * and soil suit the crop) and income, using the caller's {@link Weights}.</p>
+ *
+ * <p>Where each input comes from, and how far it can be trusted:</p>
+ * <ul>
+ *   <li>Sourced: the field's climate record, crop calendar, soil and regional soil ratings, and each
+ *       crop's tolerated pH, temperature, rainfall, cycle length, soil texture and drainage (FAO ECOCROP).</li>
+ *   <li>Estimates, not sourced: each crop's nitrogen fixed and needed, residue, disease susceptibility and
+ *       net margin. The terms that use them stay in the score for now and are marked in
+ *       {@link #scoreCropChoice}.</li>
+ *   <li>Not available yet: each crop's water need and heat-unit requirement. The terms that would use
+ *       them are written in {@link #scoreCropChoice} but left out of the score.</li>
+ * </ul>
  *
  * <p>The planner knows the whole crop catalog so that it can recognise crops in
  * a field's history, but only plants crops the farmer says they can grow.</p>
@@ -66,7 +82,80 @@ public class DynamicCropRotationPlanner {
      * Holder for results scoring of the year's performance
      * </p>
      * */
-    private record YearScore(double soilScore, double incomePerHa, String explanation) {}
+    private record YearScore(double soilScore, double reliability, double incomePerHa, String explanation, Components components) {}
+
+    /**
+     * The individual values behind a {@link YearScore}, kept so the choice can be explained in words.
+     *
+     * @param sameFamilyLastYear    whether the crop grown the year before is of the same family
+     * @param sameFamilyTwoYearsAgo whether the crop grown two years before is of the same family
+     * @param nitrogenScore         nitrogen score, -1 (drains the soil) to 1 (enriches it)
+     * @param nitrogenLeftByLastCrop nitrogen carried over from last year's crop, in kg per hectare
+     * @param nitrogenSurplusCapped whether surplus nitrogen was not counted because the soil already holds a lot
+     * @param organicMatterNeed     how much the field needs residue, 1 (normal) to 1.5
+     * @param coverFractionOfYear   share of the year the crop covers the ground, 0 to 1
+     * @param reliability           how well the field's climate and soil suit the crop
+     */
+    private record Components(
+            boolean sameFamilyLastYear,
+            boolean sameFamilyTwoYearsAgo,
+            double nitrogenScore,
+            double nitrogenLeftByLastCrop,
+            boolean nitrogenSurplusCapped,
+            double organicMatterNeed,
+            double coverFractionOfYear,
+            Reliability reliability) {}
+
+    /**
+     * How well one condition of the field matches what a crop needs.
+     *
+     * @param value          1 when the field is inside the crop's optimal range, falling to 0 at the limit of what it tolerates
+     * @param direction      -1 when the field is below what the crop prefers, 1 when above, 0 when it fits or is unknown
+     * @param known          whether there was data to compare
+     * @param years          number of past years compared, when the fit is a share of years
+     * @param yearsTolerated how many of those years were inside the range the crop tolerates
+     */
+    private record Fit(double value, int direction, boolean known, int years, int yearsTolerated) {
+
+        /** A fit that could not be checked: counted as fully suitable so a missing value never rules a crop out. */
+        static final Fit UNKNOWN = new Fit(1, 0, false, 0, 0);
+
+        /**
+         * Creates a fit that was checked against data.
+         *
+         * @param value     the fit, 0 to 1
+         * @param direction -1 below what the crop prefers, 1 above, 0 otherwise
+         * @return the fit
+         */
+        static Fit of(double value, int direction) {
+            return new Fit(value, direction, true, 0, 0);
+        }
+    }
+
+    /**
+     * How reliable a crop is in a field: the lowest of the individual fits, because the weakest condition
+     * limits the crop however good the others are.
+     *
+     * @param value        reliability, 0 (unsuited) to 1 (well suited)
+     * @param limitedBy    the condition with the lowest fit, or {@code null} when nothing limits the crop
+     * @param known        whether any condition could be checked
+     * @param temperature  growing-season temperature against the crop's range
+     * @param rainfall     yearly rainfall against the crop's range, as a share of past years
+     * @param seasonLength share of past years with enough frost-free days for the crop's shortest cycle
+     * @param texture      soil texture against the crop's tolerance
+     * @param drainage     soil drainage against the crop's tolerance
+     * @param landClass    regional land capability class against the kind of crop
+     */
+    private record Reliability(
+            double value,
+            String limitedBy,
+            boolean known,
+            Fit temperature,
+            Fit rainfall,
+            Fit seasonLength,
+            Fit texture,
+            Fit drainage,
+            Fit landClass) {}
 
     /**
      * Determine the score of this crop choice in this field, factoring in the previous two years'
@@ -76,15 +165,25 @@ public class DynamicCropRotationPlanner {
      * not considered by this algorithm
      * </p>
      *
-     * TODO: Review the available NASA data to determine if we want to include additional considerations in this calculation. eg. Weather
+     * <p>
+     * The NASA climate record, crop calendar and regional soil ratings now feed this calculation through
+     * {@link Field#conditions()}: steps 2 to 5 below. Steps 6 and 7 are written but not yet counted.
+     * </p>
      *
      * @param field           the field being planned
      * @param cropOneYearAgo  crop grown the year before, or {@code null} for none
      * @param cropTwoYearsAgo crop grown two years before, or {@code null} for none
      * @param candidateCrop   crop being considered for this year
-     * @return soil score, disease-adjusted income per hectare and an explanation
+     * @param planYear        position of this year in the plan, starting at 1; the seasonal outlook only applies to year 1
+     * @return soil score, reliability, disease-adjusted income per hectare and an explanation
      */
-    private YearScore scoreCropChoice(Field field, Crop cropOneYearAgo, Crop cropTwoYearsAgo, Crop candidateCrop) { // Scoring function
+    private YearScore scoreCropChoice(Field field, Crop cropOneYearAgo, Crop cropTwoYearsAgo, Crop candidateCrop, int planYear) { // Scoring function
+
+        // Climate record, crop calendar and regional soil ratings for this field. Any value inside may be missing.
+        FieldConditions conditions = field.conditions();
+
+        // What the candidate needs from climate and soil (FAO ECOCROP), or null when not known
+        CropReference.Requirements needs = candidateCrop.requirements();
 
         // 1. Calculate disease penalty
 
@@ -95,10 +194,13 @@ public class DynamicCropRotationPlanner {
          */
         double diseasePenalty = 0;
 
+        boolean sameFamilyLastYear = cropOneYearAgo != null && cropOneYearAgo.family().equals(candidateCrop.family());
+        boolean sameFamilyTwoYearsAgo = cropTwoYearsAgo != null && cropTwoYearsAgo.family().equals(candidateCrop.family());
+
         /*
             If same crop was grown last year as current, we apply a hefty penalty.
          */
-        if (cropOneYearAgo != null && cropOneYearAgo.family().equals(candidateCrop.family())) {
+        if (sameFamilyLastYear) {
             diseasePenalty -= 1.0;
         }
 
@@ -107,17 +209,25 @@ public class DynamicCropRotationPlanner {
             decreases over time.
             TODO: Is this true if the same crop was grown last year AND two years ago? Need to do some research but maybe an extra modifier if 1 year ago crop == 2 years ago crop == current crop
          */
-        if (cropTwoYearsAgo != null && cropTwoYearsAgo.family().equals(candidateCrop.family())) {
+        if (sameFamilyTwoYearsAgo) {
             diseasePenalty -= 0.5;
         }
 
         /*
             Scale the penalty against the relative 0 - 1 disease susceptibility of this crop. 0 being "Immune to disease"
             and 1 being "very vulnerable to disease"
+
+            NOTE: The crop family is a fact, but diseaseSusceptibility is an estimate: we did not have reliable data
+            for it. It stays in the calculation for now and may be removed once the data-backed terms prove out.
          */
         diseasePenalty *= candidateCrop.diseaseSusceptibility();
 
         // 2. Calculate Nitrogen scoring
+
+        /*
+            NOTE: nFixKgHa and nDemandKgHa are estimates: we did not have reliable data for them. This term stays
+            in the calculation for now and may be removed once the data-backed terms prove out.
+         */
 
         /*
             Determine the nitrogen left in the soil from last year's crop
@@ -134,26 +244,57 @@ public class DynamicCropRotationPlanner {
          */
         double nitrogenScore = clamp(nitrogenBalanceKg / 100.0, -1, 1);
 
+        /*
+            Where the regional soil record (Agriculture and Agri-Food Canada) rates the nitrogen left in the soil
+            after harvest as high, more nitrogen is not a benefit: it is at risk of being lost to water or air.
+            So a surplus counts as neutral there, while a shortfall still counts against the crop.
+         */
+        boolean nitrogenSurplusCapped = conditions.residualNitrogenHigh() && nitrogenScore > 0;
+        if (nitrogenSurplusCapped) {
+            nitrogenScore = 0;
+        }
+
         // 3. Organic matter score
 
         /*
             Base starting point is the organic matter score. Plants that leave more residue are better for the soil
+
+            NOTE: residueScore is an estimate: we did not have reliable data for it. This term stays in the
+            calculation for now and may be removed once the data-backed terms prove out.
          */
         double organicMatterScore = candidateCrop.residueScore();
 
         /*
-            If the field is already low in organic matter, we will apply a small penalty since it will need extra residue
+            Residue is worth more on a field that needs it. The need starts at 1 and rises by a quarter when the
+            field is already low in organic matter (topsoil estimate), and by another quarter when the area's soils
+            are losing organic carbon (Agriculture and Agri-Food Canada). Multiplying, rather than subtracting the
+            same amount from every crop, is what lets this change which crop is chosen.
          */
+        double organicMatterNeed = 1.0;
         if (field.organicMatterPct() < 2.0) {
-            organicMatterScore -= 0.2;
+            organicMatterNeed += 0.25;
         }
+        if (conditions.organicCarbonDeclining()) {
+            organicMatterNeed += 0.25;
+        }
+        organicMatterScore *= organicMatterNeed;
 
         // 4. Erosion protection
 
         /*
             Determine what fraction of the year on a 0 to 1 scale this crop covers the ground. More ground cover helps prevent erosion
+
+            Taken from the crop calendar's usual planting and maturity dates around this field when it covers the
+            crop. A perennial covers the ground all year. Otherwise the crop's coverMonths is used, which is an
+            estimate.
          */
         double coverFractionOfYear = candidateCrop.coverMonths() / 12.0;
+        FieldConditions.CropSeason usualSeason = conditions.cropSeasons().get(candidateCrop.id());
+        if (needs != null && needs.perennial()) {
+            coverFractionOfYear = 1.0;
+        } else if (usualSeason != null) {
+            coverFractionOfYear = clamp(usualSeason.growingSeasonDays() / 365.0, 0, 1);
+        }
 
         /*
             Scale the erosion risk based on the fraction of the year the field is covered
@@ -165,6 +306,62 @@ public class DynamicCropRotationPlanner {
                 + 0.25 * nitrogenScore // Nitrogen balance counts for 25%
                 + 0.20 * organicMatterScore // Organic matter counts for 20%
                 + 0.15 * erosionProtectionScore; // Erosion protection counts for 15%
+
+        // 5. Reliability: how well the field's climate and soil suit this crop
+
+        /*
+            Compares the field's temperature, rainfall record, season length, soil texture, drainage and land class
+            with what the crop needs. Each comparison gives a fit from 0 to 1, and the reliability is the lowest of
+            them: one unsuitable condition limits the crop however good the others are. A condition with no data
+            counts as a fit of 1, so a missing value never rules a crop out.
+         */
+        Reliability reliability = assessReliability(field, candidateCrop, planYear);
+
+        // 6. Water balance. NOT PART OF THE SCORE YET.
+
+        /*
+            NOTE: We would like to integrate this, but do not yet have good data on it.
+
+            The field side is available: growing-season rainfall here, and later NASA POWER reference
+            evapotranspiration, GRACE groundwater and MODIS evapotranspiration. The crop side is not: we have no
+            sourced figure for how much water each crop needs over its season (seasonWaterNeedMm is empty for every
+            crop; FAO-56 crop coefficients would give it). Until then this is calculated when the values exist, for
+            checking, and left out of the soil score and the reliability.
+
+            Scale: 0 when season rainfall covers the crop's need, down to -1 when there is none of it.
+         */
+        double waterBalanceScore = 0;
+        Double seasonWaterNeedMm = needs == null ? null : needs.seasonWaterNeedMm();
+        if (seasonWaterNeedMm != null && seasonWaterNeedMm > 0 && conditions.seasonRainfallMm() != null) {
+            waterBalanceScore = clamp((conditions.seasonRainfallMm() - seasonWaterNeedMm) / seasonWaterNeedMm, -1, 0);
+        }
+
+        // 7. Heat units. NOT PART OF THE SCORE YET.
+
+        /*
+            NOTE: We would like to integrate this, but do not yet have good data on it.
+
+            The field side is available: crop heat units for each past year. The crop side is not: we have no
+            sourced figure for the heat units each crop needs to mature (heatUnitsRequired is empty for every crop;
+            provincial crop-heat-unit ratings would give it). Until then this is calculated when the values exist,
+            for checking, and left out of the reliability.
+
+            Scale: the share of past years that reached the crop's requirement, 0 to 1.
+         */
+        double heatUnitScore = 1;
+        Double heatUnitsRequired = needs == null ? null : needs.heatUnitsRequired();
+        if (heatUnitsRequired != null && !conditions.yearlyHeatUnits().isEmpty()) {
+            long yearsWithEnoughHeat = conditions.yearlyHeatUnits().stream().filter(units -> units >= heatUnitsRequired).count();
+            heatUnitScore = (double) yearsWithEnoughHeat / conditions.yearlyHeatUnits().size();
+        }
+
+        // 8. Income
+
+        /*
+            NOTE: netMarginPerHa is an estimate: we did not have reliable data for it. Statistics Canada gives yield
+            and price, but not costs, so a real margin cannot be worked out yet. This term stays in the calculation
+            for now (the default weights give income no say) and may be removed or replaced later.
+         */
 
         /*
             Factor the lost yield due to disease into the income estimate, up to a maximum of 30%
@@ -181,22 +378,518 @@ public class DynamicCropRotationPlanner {
 
             TODO: Unlikely we'll want to use this on the frontend. Better idea is to return the actual values for formatting
          */
-        String explanation = String.format("disease %.2f, nitrogen %.2f, organic matter %.2f, cover %.2f",
-                diseasePenalty, nitrogenScore, organicMatterScore, erosionProtectionScore);
+        String explanation = String.format("disease %.2f, nitrogen %.2f, organic matter %.2f, cover %.2f, reliability %.2f%s",
+                diseasePenalty, nitrogenScore, organicMatterScore, erosionProtectionScore, reliability.value(),
+                reliability.limitedBy() == null || reliability.value() >= 0.995 ? "" : " (limited by " + reliability.limitedBy() + ")");
 
-        return new YearScore(soilScore, incomePerHa, explanation);
+        // The two terms that are not part of the score yet are only reported when there was something to calculate
+        if (seasonWaterNeedMm != null || heatUnitsRequired != null) {
+            explanation += String.format("; not scored: water %.2f, heat units %.2f", waterBalanceScore, heatUnitScore);
+        }
+
+        Components components = new Components(sameFamilyLastYear, sameFamilyTwoYearsAgo, nitrogenScore,
+                nitrogenLeftByLastCrop, nitrogenSurplusCapped, organicMatterNeed, coverFractionOfYear, reliability);
+
+        return new YearScore(soilScore, reliability.value(), incomePerHa, explanation, components);
     }
 
     /**
-     * Determine whether the crop is allowed in this field. At this time this is just based on whether the acidity of the field is in the
-     * acceptable range for this plant, but could be extended later (maybe farmer blocks out specific fields for specific crops).
+     * Determine whether the crop is allowed in this field: the acidity of the field must be in the acceptable range for
+     * this plant, and the field's climate and soil must not be outside what the plant tolerates (a reliability of 0).
+     * Could be extended later (maybe farmer blocks out specific fields for specific crops).
      *
      * @param field the field being planned
      * @param crop  the crop being considered
      * @return whether the crop may be planted in this field
      */
     private boolean isCropAllowed(Field field, Crop crop) {
-        return field.ph() >= crop.phMin() && field.ph() <= crop.phMax();
+        boolean acidityTolerated = field.ph() >= crop.phMin() && field.ph() <= crop.phMax();
+
+        // Plan year 0: judged on the long-term record alone, without the first year's seasonal outlook
+        return acidityTolerated && assessReliability(field, crop, 0).value() > 0;
+    }
+
+    /**
+     * Works out how reliable a crop is in a field by comparing the field's conditions with what the crop needs.
+     *
+     * @param field    the field being planned
+     * @param crop     the crop being considered
+     * @param planYear position of the year in the plan, starting at 1; 0 to ignore the seasonal outlook
+     * @return the reliability, the condition that limits it and the individual fits
+     */
+    private Reliability assessReliability(Field field, Crop crop, int planYear) {
+        Fit temperature = temperatureFit(field, crop);
+        Fit rainfall = rainfallFit(field, crop, planYear);
+        Fit seasonLength = seasonLengthFit(field, crop);
+        Fit texture = textureFit(field, crop);
+        Fit drainage = drainageFit(field, crop);
+        Fit landClass = landClassFit(field, crop);
+
+        // The reliability is the lowest fit; remember which condition it came from
+        String[] names = {"temperature", "rainfall", "season length", "soil texture", "drainage", "land class"};
+        Fit[] fits = {temperature, rainfall, seasonLength, texture, drainage, landClass};
+        double lowest = 1;
+        String limitedBy = null;
+        boolean known = false;
+        for (int index = 0; index < fits.length; index++) {
+            known = known || fits[index].known();
+            if (fits[index].value() < lowest) {
+                lowest = fits[index].value();
+                limitedBy = names[index];
+            }
+        }
+        return new Reliability(lowest, limitedBy, known, temperature, rainfall, seasonLength, texture, drainage, landClass);
+    }
+
+    /**
+     * Compares the mean temperature of the crop's growing months with the temperature range the crop needs.
+     *
+     * <p>The growing months are the crop calendar's planting-to-maturity months when the calendar covers the
+     * crop and it is sown and harvested in one calendar year; otherwise the field's main growing season. Months
+     * colder than the crop's lowest tolerated temperature are left out, because the crop is not growing then.</p>
+     *
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return the temperature fit, or {@link Fit#UNKNOWN} without a temperature record or crop requirements
+     */
+    private Fit temperatureFit(Field field, Crop crop) {
+        CropReference.Requirements needs = crop.requirements();
+        List<Double> monthlyMeanTempC = field.conditions().monthlyMeanTempC();
+        if (needs == null || monthlyMeanTempC.size() != 12 || needs.tempMinC() == null || needs.tempOptimalMinC() == null
+                || needs.tempOptimalMaxC() == null || needs.tempMaxC() == null) {
+            return Fit.UNKNOWN;
+        }
+        double total = 0;
+        int warmMonths = 0;
+        int monthsWithData = 0;
+        for (int month : growingMonths(field.conditions(), crop)) {
+            Double meanTempC = monthlyMeanTempC.get(month - 1);
+            if (meanTempC == null) {
+                continue;
+            }
+            monthsWithData++;
+            if (meanTempC >= needs.tempMinC()) {
+                total += meanTempC;
+                warmMonths++;
+            }
+        }
+        if (monthsWithData == 0) {
+            return Fit.UNKNOWN;
+        }
+        if (warmMonths == 0) {
+            // No growing month is warm enough for the crop to grow at all
+            return Fit.of(0, -1);
+        }
+        return rangeFit(total / warmMonths, needs.tempMinC(), needs.tempOptimalMinC(), needs.tempOptimalMaxC(), needs.tempMaxC());
+    }
+
+    /**
+     * Compares each past year's rainfall with the rainfall range the crop needs and averages the result, so the
+     * fit reads as the share of years that suited the crop.
+     *
+     * <p>In the first plan year, when there is a seasonal outlook, the driest, middle and wettest thirds of
+     * past years are weighted by the outlook's chances of a dry, normal and wet season instead of equally.</p>
+     *
+     * @param field    the field being planned
+     * @param crop     the crop being considered
+     * @param planYear position of the year in the plan, starting at 1
+     * @return the rainfall fit, or {@link Fit#UNKNOWN} without a rainfall record or crop requirements
+     */
+    private Fit rainfallFit(Field field, Crop crop, int planYear) {
+        CropReference.Requirements needs = crop.requirements();
+        FieldConditions conditions = field.conditions();
+        if (needs == null || conditions.yearlyRainfallMm().isEmpty() || needs.rainMinMm() == null
+                || needs.rainOptimalMinMm() == null || needs.rainOptimalMaxMm() == null || needs.rainMaxMm() == null) {
+            return Fit.UNKNOWN;
+        }
+
+        // Driest year first, so the thirds below are the dry, normal and wet years
+        List<Double> rainfallByYear = conditions.yearlyRainfallMm().stream().sorted().toList();
+        int years = rainfallByYear.size();
+        double[] fitByYear = new double[years];
+        int yearsTolerated = 0;
+        int drierYears = 0;
+        int wetterYears = 0;
+        for (int index = 0; index < years; index++) {
+            double rainfallMm = rainfallByYear.get(index);
+            Fit yearFit = rangeFit(rainfallMm, needs.rainMinMm(), needs.rainOptimalMinMm(), needs.rainOptimalMaxMm(), needs.rainMaxMm());
+            fitByYear[index] = yearFit.value();
+            if (rainfallMm >= needs.rainMinMm() && rainfallMm <= needs.rainMaxMm()) {
+                yearsTolerated++;
+            }
+            if (yearFit.direction() < 0) {
+                drierYears++;
+            } else if (yearFit.direction() > 0) {
+                wetterYears++;
+            }
+        }
+
+        double value = mean(fitByYear, 0, years);
+        FieldConditions.RainfallChances outlook = conditions.firstYearRainfall();
+        if (planYear == 1 && outlook != null && years >= 3) {
+            int third = years / 3;
+            double dryYearsFit = mean(fitByYear, 0, third);
+            double normalYearsFit = mean(fitByYear, third, years - third);
+            double wetYearsFit = mean(fitByYear, years - third, years);
+            value = outlook.below() * dryYearsFit + outlook.near() * normalYearsFit + outlook.above() * wetYearsFit;
+        }
+        int direction = drierYears == wetterYears ? 0 : (drierYears > wetterYears ? -1 : 1);
+        return new Fit(clamp(value, 0, 1), direction, true, years, yearsTolerated);
+    }
+
+    /**
+     * Finds the share of past years with enough frost-free days for the crop's shortest cycle. Perennials and
+     * crops that overwinter are not checked, because frost does not end their season.
+     *
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return the season-length fit, or {@link Fit#UNKNOWN} when it does not apply or cannot be checked
+     */
+    private Fit seasonLengthFit(Field field, Crop crop) {
+        CropReference.Requirements needs = crop.requirements();
+        List<Double> yearlyFrostFreeDays = field.conditions().yearlyFrostFreeDays();
+        FieldConditions.CropSeason usualSeason = field.conditions().cropSeasons().get(crop.id());
+        if (needs == null || needs.cycleMinDays() == null || yearlyFrostFreeDays.isEmpty() || needs.perennial()
+                || (usualSeason != null && usualSeason.crossesNewYear())) {
+            return Fit.UNKNOWN;
+        }
+        int longEnough = 0;
+        for (double frostFreeDays : yearlyFrostFreeDays) {
+            if (frostFreeDays >= needs.cycleMinDays()) {
+                longEnough++;
+            }
+        }
+        return new Fit((double) longEnough / yearlyFrostFreeDays.size(), -1, true, yearlyFrostFreeDays.size(), longEnough);
+    }
+
+    /**
+     * Compares the field's topsoil texture with the textures the crop does best in and tolerates.
+     *
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return the texture fit, or {@link Fit#UNKNOWN} without a texture or crop requirements
+     */
+    private Fit textureFit(Field field, Crop crop) {
+        CropReference.Requirements needs = crop.requirements();
+        String textureGroup = textureGroup(field.texture());
+        if (needs == null || textureGroup == null) {
+            return Fit.UNKNOWN;
+        }
+        return classFit(textureGroup, needs.textureOptimal(), needs.textureTolerated());
+    }
+
+    /**
+     * Compares the area's dominant soil drainage with the drainage the crop does best in and tolerates.
+     * Imperfectly drained soil sits between well and poorly drained, so it takes the average of the two.
+     *
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return the drainage fit, or {@link Fit#UNKNOWN} without a drainage class or crop requirements
+     */
+    private Fit drainageFit(Field field, Crop crop) {
+        CropReference.Requirements needs = crop.requirements();
+        String drainageCode = field.conditions().drainageCode();
+        if (needs == null || drainageCode == null) {
+            return Fit.UNKNOWN;
+        }
+        return switch (drainageCode.toUpperCase(Locale.ROOT)) {
+            case "R" -> classFit("excessive", needs.drainageOptimal(), needs.drainageTolerated());
+            case "W" -> classFit("well", needs.drainageOptimal(), needs.drainageTolerated());
+            case "P" -> classFit("poorly", needs.drainageOptimal(), needs.drainageTolerated());
+            case "I" -> {
+                Fit well = classFit("well", needs.drainageOptimal(), needs.drainageTolerated());
+                Fit poorly = classFit("poorly", needs.drainageOptimal(), needs.drainageTolerated());
+                yield well.known() && poorly.known() ? Fit.of((well.value() + poorly.value()) / 2, 0) : Fit.UNKNOWN;
+            }
+            default -> Fit.UNKNOWN;
+        };
+    }
+
+    /**
+     * Applies the Canada Land Inventory capability class. Classes 1 to 3 suit sustained annual cropping. Class 4
+     * is marginal for it, classes 5 and 6 suit perennial forage only, and class 7 has no capability for crops.
+     * The map is regional (1:250,000) and a field can differ from the land around it, so a poor class lowers
+     * reliability in steps instead of ruling a crop out.
+     *
+     * @param field the field being planned
+     * @param crop  the crop being considered
+     * @return the land class fit, or {@link Fit#UNKNOWN} without a land class
+     */
+    private Fit landClassFit(Field field, Crop crop) {
+        String landClass = field.conditions().landClass();
+        if (landClass == null) {
+            return Fit.UNKNOWN;
+        }
+        boolean perennial = crop.requirements() != null && crop.requirements().perennial();
+        return switch (landClass.strip()) {
+            case "1", "2", "3" -> Fit.of(1, 0);
+            case "4" -> Fit.of(perennial ? 1 : 0.9, 0);
+            case "5" -> Fit.of(perennial ? 1 : 0.7, 0);
+            case "6" -> Fit.of(perennial ? 1 : 0.5, 0);
+            case "7" -> Fit.of(0.3, 0);
+            default -> Fit.UNKNOWN;
+        };
+    }
+
+    /**
+     * Grades a value against a crop's range: 1 inside the optimal range, falling in a straight line to 0 at the
+     * edge of the range the crop tolerates.
+     *
+     * @param value      the field's value
+     * @param minimum    lowest value the crop tolerates
+     * @param optimalMin low end of the optimal range
+     * @param optimalMax high end of the optimal range
+     * @param maximum    highest value the crop tolerates
+     * @return the fit and whether the value is below or above what the crop prefers
+     */
+    private static Fit rangeFit(double value, double minimum, double optimalMin, double optimalMax, double maximum) {
+        if (value >= optimalMin && value <= optimalMax) {
+            return Fit.of(1, 0);
+        }
+        if (value < optimalMin) {
+            return Fit.of(value <= minimum ? 0 : (value - minimum) / (optimalMin - minimum), -1);
+        }
+        return Fit.of(value >= maximum ? 0 : (maximum - value) / (maximum - optimalMax), 1);
+    }
+
+    /**
+     * Grades a soil class against the classes a crop does best in and tolerates.
+     *
+     * @param soilClass the field's class, for example {@code medium} or {@code well}
+     * @param optimal   classes the crop does best in
+     * @param tolerated every class the crop tolerates
+     * @return 1 for an optimal class, 0.8 for a tolerated one, 0.5 otherwise; unknown when the crop has no list
+     */
+    private static Fit classFit(String soilClass, List<String> optimal, List<String> tolerated) {
+        if (optimal == null || optimal.isEmpty() || tolerated == null || tolerated.isEmpty()) {
+            return Fit.UNKNOWN;
+        }
+        if (optimal.contains(soilClass)) {
+            return Fit.of(1, 0);
+        }
+        /*
+            A soil class outside the crop's lists lowers reliability but only to a half. The texture class is an
+            estimate and the drainage class comes from a regional map, and both can be managed on the farm (tile
+            drains, for one), so on their own they should not make a crop look unworkable.
+         */
+        return Fit.of(tolerated.contains(soilClass) ? 0.8 : 0.5, 0);
+    }
+
+    /**
+     * Groups a USDA soil texture class into the heavy, medium and light groups crop requirements use.
+     *
+     * @param texture USDA texture class, for example {@code Sandy loam}; may be {@code null}
+     * @return {@code heavy}, {@code medium} or {@code light}, or {@code null} when the texture is not known
+     */
+    private static String textureGroup(String texture) {
+        if (texture == null) {
+            return null;
+        }
+        return switch (texture.strip().toLowerCase(Locale.ROOT)) {
+            case "sand", "loamy sand", "sandy loam" -> "light";
+            case "clay", "silty clay", "sandy clay" -> "heavy";
+            case "loam", "silt loam", "silt", "sandy clay loam", "clay loam", "silty clay loam" -> "medium";
+            default -> null;
+        };
+    }
+
+    /**
+     * Finds the months a crop is growing in.
+     *
+     * @param conditions the field's conditions
+     * @param crop       the crop being considered
+     * @return months 1 to 12: the crop calendar's season when it lies within one calendar year, otherwise the
+     *         field's main growing season, otherwise every month
+     */
+    private static List<Integer> growingMonths(FieldConditions conditions, Crop crop) {
+        FieldConditions.CropSeason usualSeason = conditions.cropSeasons().get(crop.id());
+        if (usualSeason != null && !usualSeason.crossesNewYear() && usualSeason.maturityDay() >= usualSeason.plantingDay()) {
+            int firstMonth = monthOfDay(usualSeason.plantingDay());
+            int lastMonth = monthOfDay(usualSeason.maturityDay());
+            List<Integer> months = new ArrayList<>();
+            for (int month = firstMonth; month <= lastMonth; month++) {
+                months.add(month);
+            }
+            return months;
+        }
+        if (!conditions.seasonMonths().isEmpty()) {
+            return conditions.seasonMonths();
+        }
+        return List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+    }
+
+    /**
+     * Converts a day of the year to its month, in a year that is not a leap year.
+     *
+     * @param dayOfYear day of the year, 1 to 365
+     * @return the month, 1 to 12
+     */
+    private static int monthOfDay(int dayOfYear) {
+        return LocalDate.ofYearDay(2023, (int) clamp(dayOfYear, 1, 365)).getMonthValue();
+    }
+
+    /**
+     * Averages part of an array.
+     *
+     * @param values the values
+     * @param from   first index, inclusive
+     * @param to     last index, exclusive
+     * @return the mean, or 0 for an empty part
+     */
+    private static double mean(double[] values, int from, int to) {
+        if (to <= from) {
+            return 0;
+        }
+        double total = 0;
+        for (int index = from; index < to; index++) {
+            total += values[index];
+        }
+        return total / (to - from);
+    }
+
+    /**
+     * Says in plain language why a crop was chosen for a year and what to watch for, from the same values the
+     * score was built from. A sentence is only included when what it describes applied to this choice.
+     *
+     * @param field           the field being planned
+     * @param cropOneYearAgo  crop grown the year before, or {@code null} for none
+     * @param cropTwoYearsAgo crop grown two years before, or {@code null} for none
+     * @param chosenCrop      the crop chosen for the year
+     * @param planYear        position of the year in the plan, starting at 1
+     * @param yearScore       the score of this choice
+     * @return sentences for the farmer: what the crop does for the field first, then cautions
+     */
+    private List<String> describeChoice(Field field, Crop cropOneYearAgo, Crop cropTwoYearsAgo, Crop chosenCrop,
+                                        int planYear, YearScore yearScore) {
+        Components parts = yearScore.components();
+        List<String> benefits = new ArrayList<>();
+        List<String> cautions = new ArrayList<>();
+
+        // Nitrogen
+        if (chosenCrop.nFixKgHa() > 0) {
+            benefits.add(parts.nitrogenSurplusCapped()
+                    ? "Takes its nitrogen from the air, so it needs little or no nitrogen fertilizer."
+                    : "Adds nitrogen to the soil for the following crop.");
+        } else if (parts.nitrogenLeftByLastCrop() > 0 && chosenCrop.nDemandKgHa() > 0) {
+            benefits.add("Uses nitrogen left in the soil by last year's " + lower(cropOneYearAgo.name())
+                    + ", so it needs less fertilizer.");
+        }
+        if (chosenCrop.nFixKgHa() <= 0 && parts.nitrogenScore() <= -0.75) {
+            cautions.add("Takes a lot of nitrogen from the soil, so plan for fertilizer or manure.");
+        }
+
+        // Rotation and disease
+        if (parts.sameFamilyLastYear()) {
+            boolean sameCrop = cropOneYearAgo.id().equals(chosenCrop.id());
+            boolean perennial = chosenCrop.requirements() != null && chosenCrop.requirements().perennial();
+            if (sameCrop && perennial) {
+                cautions.add("Keeps last year's stand in place; pest and disease pressure builds the longer it stays.");
+            } else if (sameCrop) {
+                cautions.add("Same crop as last year, so pest and disease risk is higher.");
+            } else {
+                cautions.add("Same crop family as last year's " + lower(cropOneYearAgo.name()) + ", so pest and disease risk is higher.");
+            }
+        } else {
+            if (cropOneYearAgo != null) {
+                benefits.add("Follows " + lower(cropOneYearAgo.name())
+                        + ", a different crop family, which helps break pest and disease cycles.");
+            }
+            if (parts.sameFamilyTwoYearsAgo()) {
+                cautions.add("Same crop family as the " + lower(cropTwoYearsAgo.name())
+                        + " grown two years earlier, so some pest and disease risk carries over.");
+            }
+        }
+
+        // Ground cover
+        if (parts.coverFractionOfYear() >= 0.6) {
+            String cover = parts.coverFractionOfYear() >= 0.99
+                    ? "Keeps the ground covered all year"
+                    : "Keeps the ground covered for about " + Math.round(parts.coverFractionOfYear() * 365) + " days of the year";
+            benefits.add(cover + (field.erosionRisk() >= 0.5 ? ", which protects this erosion-prone field." : ", which limits erosion."));
+        }
+
+        // Residue and organic matter
+        if (chosenCrop.residueScore() >= 0.6) {
+            boolean lowOrganicMatter = field.organicMatterPct() < 2.0;
+            boolean losingCarbon = field.conditions().organicCarbonDeclining();
+            String why = ".";
+            if (lowOrganicMatter && losingCarbon) {
+                why = "; that matters here because this soil is low in organic matter and soils in this area are losing it.";
+            } else if (lowOrganicMatter) {
+                why = "; that matters here because this soil is low in organic matter.";
+            } else if (losingCarbon) {
+                why = "; that matters here because soils in this area are losing organic matter.";
+            }
+            benefits.add("Leaves a lot of crop residue, which builds organic matter" + why);
+        }
+
+        // Reliability
+        Reliability reliability = parts.reliability();
+        if (reliability.known()) {
+            if (reliability.value() >= 0.9) {
+                Fit rainfall = reliability.rainfall();
+                benefits.add(rainfall.known() && rainfall.years() > 0
+                        ? "Well suited to this field's climate and soil: rainfall was within the range it tolerates in "
+                                + rainfall.yearsTolerated() + " of the last " + rainfall.years() + " years."
+                        : "Well suited to what is known of this field's climate and soil.");
+            } else if (reliability.value() >= 0.6) {
+                cautions.add("Suits this field, though " + limitInWords(field, reliability));
+            } else {
+                cautions.add("Less reliable here: " + limitInWords(field, reliability));
+            }
+        }
+
+        // Seasonal outlook, first plan year only
+        FieldConditions.RainfallChances outlook = field.conditions().firstYearRainfall();
+        if (planYear == 1 && outlook != null && reliability.rainfall().known()) {
+            if (outlook.below() >= 0.4 && outlook.below() > outlook.above()) {
+                cautions.add("The seasonal outlook leans dry for the coming growing season.");
+            } else if (outlook.above() >= 0.4 && outlook.above() > outlook.below()) {
+                cautions.add("The seasonal outlook leans wet for the coming growing season.");
+            }
+        }
+
+        List<String> reasons = new ArrayList<>(benefits);
+        reasons.addAll(cautions);
+        return List.copyOf(reasons);
+    }
+
+    /**
+     * Describes the condition that limits a crop's reliability.
+     *
+     * @param field       the field being planned
+     * @param reliability the crop's reliability in the field
+     * @return the end of a sentence that begins "Less reliable here: " or "Suits this field, though "
+     */
+    private static String limitInWords(Field field, Reliability reliability) {
+        return switch (String.valueOf(reliability.limitedBy())) {
+            case "temperature" -> reliability.temperature().direction() < 0
+                    ? "the growing season is cooler than this crop prefers."
+                    : "the growing season is warmer than this crop prefers.";
+            case "rainfall" -> reliability.rainfall().direction() < 0
+                    ? "most years are drier than this crop prefers."
+                    : "most years are wetter than this crop prefers.";
+            case "season length" -> "in some years the frost-free season is too short for it.";
+            case "soil texture" -> "this " + lower(String.valueOf(field.texture())) + " soil is not the texture it does best in.";
+            case "drainage" -> switch (String.valueOf(field.conditions().drainageCode()).toUpperCase(Locale.ROOT)) {
+                case "R" -> "the regional soil map shows rapidly drained soils, which hold little water for it.";
+                case "P" -> "the regional soil map shows poorly drained soils, which does not suit it unless the field is tile-drained.";
+                default -> "the regional soil map shows imperfectly drained soils, which does not suit it unless the field is tile-drained.";
+            };
+            case "land class" -> "the regional soil map rates this area land class " + field.conditions().landClass()
+                    + ", which limits annual crops; check that against the field itself.";
+            default -> "the field's conditions are not ideal for it.";
+        };
+    }
+
+    /**
+     * Lower-cases a crop or soil name for use inside a sentence.
+     *
+     * @param name display name
+     * @return the name in lower case
+     */
+    private static String lower(String name) {
+        return name.toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -206,7 +899,7 @@ public class DynamicCropRotationPlanner {
      * {@link #planField(Field, Set, Weights)} to limit the plan to the crops a farmer can grow.</p>
      *
      * @param field   the field to plan
-     * @param weights how much to value soil health against income
+     * @param weights how much to value soil health, income and reliability against each other
      * @return the best crop sequence found
      */
     public FieldPlan planField(Field field, Weights weights) {
@@ -225,7 +918,7 @@ public class DynamicCropRotationPlanner {
      *
      * @param field           the field to plan
      * @param growableCropIds ids of the crops that may be planted
-     * @param weights         how much to value soil health against income
+     * @param weights         how much to value soil health, income and reliability against each other
      * @return the best crop sequence found
      * @throws CropOptimizationValidationException when none of the growable crops suits the field
      */
@@ -240,6 +933,16 @@ public class DynamicCropRotationPlanner {
                 .filter(crop -> growableCropIds.contains(crop.id()))
                 .mapToDouble(Crop::netMarginPerHa).max().orElse(1);
         double highestMarginPerHa = largestMargin <= 0 ? 1 : largestMargin;
+
+        /*
+            Which crops may be planted here: the farmer can grow it and the field's characteristics do not rule it out.
+            Worked out once, because it does not depend on the year or on what was grown before.
+         */
+        boolean[] mayBePlanted = new boolean[availableCrops.size()];
+        for (int cropIndex = 0; cropIndex < availableCrops.size(); cropIndex++) {
+            Crop crop = availableCrops.get(cropIndex);
+            mayBePlanted[cropIndex] = growableCropIds.contains(crop.id()) && isCropAllowed(field, crop);
+        }
 
         // One state for every available crop. Add one for the "no crop" option
         int numberOfStates = availableCrops.size() + 1;
@@ -302,18 +1005,20 @@ public class DynamicCropRotationPlanner {
                         Crop candidateCrop = availableCrops.get(candidateIndex);
 
                         // If the farmer cannot grow this crop, or the field characteristics prevent planting it, skip it.
-                        if (!growableCropIds.contains(candidateCrop.id()) || !isCropAllowed(field, candidateCrop)) {
+                        if (!mayBePlanted[candidateIndex]) {
                             continue;
                         }
 
-                        // Calculate the score for this choice
-                        YearScore yearScore = scoreCropChoice(field, cropAt(cropOneYearAgo), cropAt(cropTwoYearsAgo), candidateCrop);
+                        // Calculate the score for this choice. The table's year 0 is the first plan year, so plan year is year + 1
+                        YearScore yearScore = scoreCropChoice(field, cropAt(cropOneYearAgo), cropAt(cropTwoYearsAgo), candidateCrop, year + 1);
 
                         // Scale income 0 to 1 so it is comparable to the soil score, 1.0 being the maximum possible margin per hectare
                         double incomeScore = yearScore.incomePerHa() / highestMarginPerHa;
 
                         // Calculate the combined score for this year based on the provided weights
-                        double combinedYearScore = weights.soil() * yearScore.soilScore() + weights.income() * incomeScore;
+                        double combinedYearScore = weights.soil() * yearScore.soilScore()
+                                + weights.reliability() * yearScore.reliability()
+                                + weights.income() * incomeScore;
 
                         // Add to the previous year's score for a running total
                         double newTotalScore = scoreSoFar + combinedYearScore;
@@ -343,7 +1048,7 @@ public class DynamicCropRotationPlanner {
      * @param field             the field being planned
      * @param bestTotalScore    best score for reaching each situation
      * @param cameFromOlderCrop for each best score, the crop grown before the two in the state
-     * @param weights           how much to value soil health against income
+     * @param weights           how much to value soil health, income and reliability against each other
      * @return the best plan with per-year scores
      * @throws CropOptimizationValidationException when no plan could be built
      */
@@ -377,7 +1082,8 @@ public class DynamicCropRotationPlanner {
         // Did we find a valid plan?
         if (bestLastCrop == -1) {
             throw new CropOptimizationValidationException("None of the growable crops suits field " + field.id()
-                    + " (estimated soil pH " + field.ph() + ")");
+                    + ": each is outside the soil pH it tolerates (estimated soil pH " + field.ph()
+                    + ") or outside the temperature or rainfall it tolerates in this field's climate record");
         }
 
 
@@ -429,10 +1135,14 @@ public class DynamicCropRotationPlanner {
             Crop chosenCrop = availableCrops.get(chosenCropIndexByYear[year - 1]);
 
             // Re-score it so we can report the details
-            YearScore yearScore = scoreCropChoice(field, cropOneYearAgo, cropTwoYearsAgo, chosenCrop);
+            YearScore yearScore = scoreCropChoice(field, cropOneYearAgo, cropTwoYearsAgo, chosenCrop, year);
+
+            // Say in plain language why this crop was chosen
+            List<String> reasons = describeChoice(field, cropOneYearAgo, cropTwoYearsAgo, chosenCrop, year, yearScore);
 
             // Add to the plan
-            yearPlans.add(new YearPlan(year, chosenCrop.id(), chosenCrop.name(), yearScore.soilScore(), yearScore.incomePerHa(), yearScore.explanation()));
+            yearPlans.add(new YearPlan(year, chosenCrop.id(), chosenCrop.name(), yearScore.soilScore(), yearScore.reliability(),
+                    yearScore.incomePerHa(), yearScore.explanation(), reasons));
 
             // Add to the soil total
             totalSoilScore += yearScore.soilScore();

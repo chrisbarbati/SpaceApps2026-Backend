@@ -8,7 +8,9 @@ import org.greenalienhouseparty.dto.CropOptimizationResponse;
  *
  * <p>One implementation is active at a time, chosen by the
  * {@code crop.planner.strategy} property: {@code random} (the default
- * placeholder) or {@code dynamic} (the soil-health optimizer).</p>
+ * placeholder), {@code dynamic} (the soil-health and reliability optimizer)
+ * or {@code mock} (varied illustrative plans for demonstrations, not
+ * calculated from field data).</p>
  */
 public interface CropRotationPlanner {
 

@@ -15,6 +15,8 @@ package org.greenalienhouseparty.planning.model;
  * @param phMax                 highest soil pH the crop tolerates
  * @param netMarginPerHa        net margin in dollars per hectare; may be negative for cover crops
  * @param diseaseSusceptibility how badly the crop suffers when it follows its own family, 0 (immune) to 1
+ * @param requirements          what the crop needs from climate and soil (FAO ECOCROP), or {@code null}
+ *                              when not known; the planner then skips the checks that need it
  */
 public record Crop(
         String id,
@@ -27,5 +29,37 @@ public record Crop(
         double phMin,
         double phMax,
         double netMarginPerHa,
-        double diseaseSusceptibility) {
+        double diseaseSusceptibility,
+        CropReference.Requirements requirements) {
+
+    /**
+     * Creates a crop whose climate and soil requirements are not known.
+     *
+     * @param id                    stable identifier
+     * @param name                  display name
+     * @param family                botanical family
+     * @param nFixKgHa              nitrogen fixed, in kg per hectare
+     * @param nDemandKgHa           nitrogen taken up, in kg per hectare
+     * @param residueScore          carbon returned as residue, 0 to 1
+     * @param coverMonths           months of ground cover, 0 to 12
+     * @param phMin                 lowest tolerated soil pH
+     * @param phMax                 highest tolerated soil pH
+     * @param netMarginPerHa        net margin in dollars per hectare
+     * @param diseaseSusceptibility penalty for following the same family, 0 to 1
+     */
+    public Crop(
+            String id,
+            String name,
+            String family,
+            double nFixKgHa,
+            double nDemandKgHa,
+            double residueScore,
+            int coverMonths,
+            double phMin,
+            double phMax,
+            double netMarginPerHa,
+            double diseaseSusceptibility) {
+        this(id, name, family, nFixKgHa, nDemandKgHa, residueScore, coverMonths, phMin, phMax, netMarginPerHa,
+                diseaseSusceptibility, null);
+    }
 }

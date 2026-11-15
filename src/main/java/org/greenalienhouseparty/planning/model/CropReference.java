@@ -1,5 +1,9 @@
 package org.greenalienhouseparty.planning.model;
 
+import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * Reference data for one crop: what it needs from climate and soil (sourced
  * from FAO ECOCROP) and the agronomic and economic values that are still
@@ -40,6 +44,17 @@ public record CropReference(
      * @param cycleMaxDays     longest time from planting to harvest, in days
      * @param killingTempC     temperature that kills the crop during rest, in Celsius; {@code null} when not recorded
      * @param rootingDepth     soil depth the crop needs, in words
+     * @param lifeSpan         {@code annual} or {@code perennial}
+     * @param textureOptimal   soil texture classes the crop does best in: {@code heavy}, {@code medium},
+     *                         {@code light}, {@code organic}
+     * @param textureTolerated every soil texture class the crop tolerates, including the optimal ones
+     * @param drainageOptimal  soil drainage classes the crop does best in: {@code poorly}, {@code well},
+     *                         {@code excessive}
+     * @param drainageTolerated every soil drainage class the crop tolerates, including the optimal ones
+     * @param seasonWaterNeedMm water the crop needs over its growing season, in millimetres; not yet
+     *                         sourced, so {@code null} for every crop
+     * @param heatUnitsRequired crop heat units the crop needs to mature; not yet sourced, so {@code null}
+     *                         for every crop
      */
     public record Requirements(
             Double phMin,
@@ -57,7 +72,24 @@ public record CropReference(
             Integer cycleMinDays,
             Integer cycleMaxDays,
             Double killingTempC,
-            String rootingDepth) {
+            String rootingDepth,
+            String lifeSpan,
+            List<String> textureOptimal,
+            List<String> textureTolerated,
+            List<String> drainageOptimal,
+            List<String> drainageTolerated,
+            Double seasonWaterNeedMm,
+            Double heatUnitsRequired) {
+
+        /**
+         * Says whether the crop lives for several years.
+         *
+         * @return {@code true} for a perennial crop
+         */
+        @JsonIgnore
+        public boolean perennial() {
+            return "perennial".equalsIgnoreCase(lifeSpan);
+        }
     }
 
     /**

@@ -9,7 +9,8 @@ import org.greenalienhouseparty.planning.model.CropReference;
  * The crop reference file as loaded: every crop and where each group of
  * values came from.
  *
- * @param sources provenance of the value groups, keyed {@code requirements} and {@code estimates}
+ * @param sources provenance of the value groups, keyed {@code requirements}, {@code estimates}
+ *                and {@code notYetSourced}
  * @param crops   reference data per crop, in display order
  */
 public record CropReferenceCatalog(Map<String, Source> sources, List<CropReference> crops) {

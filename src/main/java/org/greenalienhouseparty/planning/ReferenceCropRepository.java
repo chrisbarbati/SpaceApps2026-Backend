@@ -119,6 +119,7 @@ public class ReferenceCropRepository implements CropRepository {
                 needs.phMin(),
                 needs.phMax(),
                 estimates.netMarginPerHa(),
-                estimates.diseaseSusceptibility());
+                estimates.diseaseSusceptibility(),
+                needs);
     }
 }
