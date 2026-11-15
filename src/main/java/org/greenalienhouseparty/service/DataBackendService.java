@@ -35,9 +35,9 @@ import org.springframework.stereotype.Service;
 /**
  * Service facade over the Python data backend.
  *
- * <p>This layer currently re-exposes the data backend endpoints one-to-one while
- * deserializing to typed models. It is the intended home for application-specific
- * business logic that should never live in the Python backend or the frontend.</p>
+ * <p>Acquisition responses are deserialized to typed models. Crop histories are
+ * normalized and interpreted here; other acquired layers retain their provider
+ * contracts. Application decisions belong in Java rather than Python or React.</p>
  */
 @Service
 public class DataBackendService {
@@ -46,14 +46,18 @@ public class DataBackendService {
 
     private final DataBackendClient client;
 
+    private final CropHistoryInferenceService cropInference;
+
     /**
      * Creates the service.
      *
      * @param client the data backend client
+     * @param cropInference application crop-history interpretation
      */
-    public DataBackendService(DataBackendClient client) {
+    public DataBackendService(DataBackendClient client, CropHistoryInferenceService cropInference) {
         log.trace("Entering DataBackendService constructor");
         this.client = client;
+        this.cropInference = cropInference;
         log.debug("Initialized data backend service");
         log.trace("Exiting DataBackendService constructor");
     }
@@ -194,7 +198,7 @@ public class DataBackendService {
         log.trace("Entering fieldCropHistory()");
         log.debug("Requesting field crop history from the data backend");
         try {
-            return client.fieldCropHistory(fieldId);
+            return cropInference.interpret(client.fieldCropHistory(fieldId));
         } finally {
             log.trace("Exiting fieldCropHistory()");
         }
@@ -210,7 +214,7 @@ public class DataBackendService {
         log.trace("Entering cropHistory()");
         log.debug("Requesting crop history for a provided outline from the data backend");
         try {
-            return client.cropHistory(request);
+            return cropInference.interpret(client.cropHistory(request));
         } finally {
             log.trace("Exiting cropHistory()");
         }
@@ -281,7 +285,11 @@ public class DataBackendService {
             List<String> ids = uniqueFieldIds(request == null ? null : request.ids());
             log.debug("Requesting crop history for {} fields in groups of {}", ids.size(), DATA_BACKEND_BATCH_SIZE);
             List<FieldCropHistoryBatchResponse.Result> results =
-                    inGroups(ids, group -> client.fieldCropHistories(group).results());
+                    inGroups(ids, group -> client.fieldCropHistories(group).results()).stream()
+                            .map(result -> result.isOk() && result.history() != null
+                                    ? new FieldCropHistoryBatchResponse.Result(result.id(), result.status(),
+                                            cropInference.interpret(result.history()), result.error())
+                                    : result).toList();
             int succeeded = (int) results.stream().filter(FieldCropHistoryBatchResponse.Result::isOk).count();
             return new FieldCropHistoryBatchResponse(results, results.size(), succeeded, results.size() - succeeded);
         } finally {

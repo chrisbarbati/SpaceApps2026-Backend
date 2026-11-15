@@ -83,11 +83,16 @@ public record CropHistoryResponse(
      *
      * @param yearsOfData      number of mapped years
      * @param firstYear        first mapped year
-     * @param lastSeason       the newest mapped year; always last season, never the current year
+     * @param lastSeason       the newest mapped year, which may include the current season
      * @param pattern          the rotation in words, or {@code null} without history
      * @param expectedThisYear the crop the pattern points to this year, or {@code null} when there is no clear pattern
      * @param flags            data-quality warnings
      * @param notes            one sentence per caveat, ready to show
+     * @param reviewYear       calendar year evaluated by the application backend
+     * @param latestMapped     newest observation at or before the review year
+     * @param currentCrop      explicit mapped, estimated or unavailable crop result
+     * @param recentYears      five calendar slots, preserving missing observations
+     * @param timeline         complete calendar slots for the available history
      */
     public record Summary(
             Integer yearsOfData,
@@ -96,7 +101,37 @@ public record CropHistoryResponse(
             Pattern pattern,
             ExpectedCrop expectedThisYear,
             Flags flags,
-            List<String> notes) {
+            List<String> notes,
+            Integer reviewYear,
+            CropYear latestMapped,
+            CurrentCrop currentCrop,
+            List<CalendarYear> recentYears,
+            List<CalendarYear> timeline) {
+    }
+
+    /**
+     * Application-owned crop inference; unavailable results have no suggested crop.
+     * Confidence describes pattern support, not a calibrated probability.
+     *
+     * @param year evaluated season
+     * @param status mapped, estimated or unavailable
+     * @param group normalized crop group, or null
+     * @param crop display name, or null when unavailable
+     * @param confidence high or medium pattern support; null for mapped or unavailable results
+     * @param reason explanation of the evidence or why inference is unavailable
+     */
+    public record CurrentCrop(Integer year,
+            @Schema(allowableValues = {"mapped", "estimated", "unavailable"}) String status,
+            String group, String crop, String confidence, String reason) {
+    }
+
+    /**
+     * A calendar year and its observation, null when not mapped.
+     *
+     * @param year actual calendar year
+     * @param observation crop-map observation, or null for a gap
+     */
+    public record CalendarYear(Integer year, CropYear observation) {
     }
 
     /**

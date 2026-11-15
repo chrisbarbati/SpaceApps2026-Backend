@@ -49,7 +49,7 @@ public class CropHistoryController {
      */
     @GetMapping("/fields/{field_id}/crop-history")
     @Operation(summary = "Crop history of a field",
-            description = "Returns dominant crop-map classes and their shares for a field selected from /fields.")
+            description = "Returns acquired crop-map observations plus Java-derived groups, calendar history and current-season inference. summary.currentCrop explicitly reports mapped, estimated or unavailable; unavailable never substitutes an older crop.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Year-by-year crop classes for the field."),
             @ApiResponse(responseCode = "404", description = "No field has this ID in the loaded data."),
@@ -75,7 +75,7 @@ public class CropHistoryController {
      */
     @PostMapping("/crop-history")
     @Operation(summary = "Crop history of any outline",
-            description = "Returns annual crop-map classes for a GeoJSON Polygon, MultiPolygon, Feature, or coordinate ring.")
+            description = "Returns crop-map observations and Java-owned rotation interpretation for a GeoJSON outline. Estimates include a reason and pattern-support label; unavailable results contain no suggested crop.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Year-by-year crop classes for the outline."),
             @ApiResponse(responseCode = "422", description = "Invalid polygon or unsupported request property."),

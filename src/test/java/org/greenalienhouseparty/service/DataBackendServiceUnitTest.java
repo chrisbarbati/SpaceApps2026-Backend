@@ -60,7 +60,7 @@ class DataBackendServiceUnitTest {
      */
     @BeforeEach
     void setUp() {
-        service = new DataBackendService(client);
+        service = new DataBackendService(client, new CropHistoryInferenceService());
     }
 
     /**
@@ -173,7 +173,9 @@ class DataBackendServiceUnitTest {
                 "field-1", null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.fieldCropHistory("field-1")).thenReturn(expected);
 
-        assertSame(expected, service.fieldCropHistory("field-1"));
+        CropHistoryResponse actual = service.fieldCropHistory("field-1");
+        assertEquals(expected.years(), actual.years());
+        assertEquals("unavailable", actual.summary().currentCrop().status());
         verify(client).fieldCropHistory("field-1");
     }
 
@@ -188,7 +190,7 @@ class DataBackendServiceUnitTest {
                 null, null, List.of(), List.of(), List.of(), 0, List.of(), null, "outside coverage");
         when(client.cropHistory(request)).thenReturn(expected);
 
-        assertSame(expected, service.cropHistory(request));
+        assertEquals(expected.years(), service.cropHistory(request).years());
         verify(client).cropHistory(request);
     }
 

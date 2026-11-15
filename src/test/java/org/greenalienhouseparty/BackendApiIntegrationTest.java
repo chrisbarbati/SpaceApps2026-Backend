@@ -459,11 +459,12 @@ class BackendApiIntegrationTest {
         assertEquals("ok", results.get(0).get("status").asString());
         assertEquals("Soybeans", results.get(0).get("history").get("rotation").get(0).asString());
         JsonNode summary = results.get(0).get("history").get("summary");
-        assertEquals("A 3-year rotation: corn, corn, then soybeans.", summary.get("pattern").get("text").asString());
-        assertEquals("Corn", summary.get("expectedThisYear").get("crop").asString());
-        assertEquals("high", summary.get("expectedThisYear").get("confidence").asString());
+        assertEquals("mixed", summary.get("pattern").get("kind").asString());
+        assertTrue(summary.get("expectedThisYear").isNull());
+        assertEquals("unavailable", summary.get("currentCrop").get("status").asString());
+        assertTrue(summary.get("currentCrop").get("crop").isNull());
         assertEquals(2025, summary.get("lastSeason").get("year").asInt());
-        assertEquals(15, summary.get("yearsOfData").asInt());
+        assertEquals(1, summary.get("yearsOfData").asInt());
         assertTrue(!summary.get("flags").get("possiblyMerged").asBoolean());
         assertEquals("soybeans", results.get(0).get("history").get("years").get(0).get("group").asString());
         assertEquals("Soybeans", results.get(0).get("history").get("years").get(0).get("groupLabel").asString());
