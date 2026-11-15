@@ -12,6 +12,8 @@ import java.util.function.Supplier;
 import org.greenalienhouseparty.config.RequestIdFilter;
 import org.greenalienhouseparty.dto.AgroWeatherRequest;
 import org.greenalienhouseparty.dto.AgroWeatherResponse;
+import org.greenalienhouseparty.dto.CropCalendarRequest;
+import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -500,6 +502,51 @@ public class DataBackendClient {
                     .body(AgroWeatherResponse.class));
         } finally {
             log.trace("Exiting agroWeather()");
+        }
+    }
+
+    /**
+     * Calls the data backend's field crop calendar endpoint.
+     *
+     * @param fieldId the field identifier
+     * @param system  {@code rainfed} or {@code irrigated}, or {@code null} for the default
+     * @param crops   comma-separated calendar crop keys, or {@code null} for every crop
+     * @return usual planting and maturity dates around the field
+     */
+    public CropCalendarResponse fieldCropCalendar(String fieldId, String system, String crops) {
+        log.trace("Entering fieldCropCalendar()");
+        log.debug("Calling Python data backend GET /fields/{field_id}/crop-calendar");
+        try {
+            return execute(() -> restClient.get()
+                    .uri(builder -> builder.path("/fields/{id}/crop-calendar")
+                            .queryParamIfPresent("system", Optional.ofNullable(system))
+                            .queryParamIfPresent("crops", Optional.ofNullable(crops))
+                            .build(fieldId))
+                    .retrieve()
+                    .body(CropCalendarResponse.class));
+        } finally {
+            log.trace("Exiting fieldCropCalendar()");
+        }
+    }
+
+    /**
+     * Calls the crop calendar endpoint for a user-provided outline.
+     *
+     * @param request the polygon and optional system and crops
+     * @return usual planting and maturity dates around the outline
+     */
+    public CropCalendarResponse cropCalendar(CropCalendarRequest request) {
+        log.trace("Entering cropCalendar()");
+        log.debug("Calling Python data backend POST /crop-calendar");
+        try {
+            return execute(() -> restClient.post()
+                    .uri("/crop-calendar")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(CropCalendarResponse.class));
+        } finally {
+            log.trace("Exiting cropCalendar()");
         }
     }
 

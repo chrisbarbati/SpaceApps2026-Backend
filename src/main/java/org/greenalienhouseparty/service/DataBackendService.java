@@ -9,6 +9,8 @@ import java.util.function.Function;
 import org.greenalienhouseparty.client.DataBackendClient;
 import org.greenalienhouseparty.dto.AgroWeatherRequest;
 import org.greenalienhouseparty.dto.AgroWeatherResponse;
+import org.greenalienhouseparty.dto.CropCalendarRequest;
+import org.greenalienhouseparty.dto.CropCalendarResponse;
 import org.greenalienhouseparty.dto.CropHistoryRequest;
 import org.greenalienhouseparty.dto.CropHistoryResponse;
 import org.greenalienhouseparty.dto.DailyPointResponse;
@@ -322,6 +324,40 @@ public class DataBackendService {
             return client.agroWeather(request);
         } finally {
             log.trace("Exiting agroWeather()");
+        }
+    }
+
+    /**
+     * Retrieves usual planting and maturity dates around an indexed field.
+     *
+     * @param fieldId the field identifier
+     * @param system  {@code rainfed} or {@code irrigated}, or {@code null} for the default
+     * @param crops   comma-separated calendar crop keys, or {@code null} for every crop
+     * @return the crop calendar around the field
+     */
+    public CropCalendarResponse fieldCropCalendar(String fieldId, String system, String crops) {
+        log.trace("Entering fieldCropCalendar()");
+        log.debug("Requesting field crop calendar from the data backend");
+        try {
+            return client.fieldCropCalendar(fieldId, system, crops);
+        } finally {
+            log.trace("Exiting fieldCropCalendar()");
+        }
+    }
+
+    /**
+     * Retrieves usual planting and maturity dates around a user-provided outline.
+     *
+     * @param request the polygon and optional system and crops
+     * @return the crop calendar around the outline
+     */
+    public CropCalendarResponse cropCalendar(CropCalendarRequest request) {
+        log.trace("Entering cropCalendar()");
+        log.debug("Requesting crop calendar for a provided outline from the data backend");
+        try {
+            return client.cropCalendar(request);
+        } finally {
+            log.trace("Exiting cropCalendar()");
         }
     }
 
