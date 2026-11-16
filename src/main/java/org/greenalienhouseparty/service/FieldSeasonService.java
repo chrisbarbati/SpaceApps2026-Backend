@@ -38,22 +38,30 @@ public class FieldSeasonService {
         this.clock = clock;
     }
 
-    /** Chooses a full calendar observation period and polls acquisition without waiting for its completion. */
-    public FieldSeasonResponse fieldSeason(String fieldId, Integer requestedYear, boolean retry) {
+    /**
+     * Chooses a full calendar observation period and polls acquisition without waiting for its completion.
+     * With pixels, points carry display arrays only for observations after {@code since}, so a polling
+     * client receives each picture once; summaries always cover every observation.
+     */
+    public FieldSeasonResponse fieldSeason(String fieldId, Integer requestedYear, boolean retry, boolean pixels, int since) {
+        if (since < 0) throw new InvalidRequestException("since must be zero or more");
         LocalDate today = LocalDate.now(clock);
         int year = requestedYear == null ? Year.now(clock).getValue() : requestedYear;
         if (year < 2013 || year > today.getYear()) throw new InvalidRequestException("year must be from 2013 through the current year");
         LocalDate start = year == 2013 ? LocalDate.of(2013, 4, 11) : LocalDate.of(year, 1, 1);
         LocalDate end = year == today.getYear() ? today : LocalDate.of(year, 12, 31);
-        return prepare(fieldId, year, client.fieldSeason(fieldId, start, end, retry));
+        return prepare(fieldId, year, client.fieldSeason(fieldId, start, end, retry, pixels), pixels, since);
     }
 
     /** Applies quality rules, calendar ordering, daily deduplication and gap-aware line construction. */
-    FieldSeasonResponse prepare(String fieldId, int year, HlsAcquisitionResponse raw) {
+    FieldSeasonResponse prepare(String fieldId, int year, HlsAcquisitionResponse raw, boolean pixels, int since) {
         TreeMap<LocalDate, Point> days = new TreeMap<>();
-        for (Observation observation : raw.observations() == null ? List.<Observation>of() : raw.observations()) {
+        List<Observation> observations = raw.observations() == null ? List.of() : raw.observations();
+        for (int index = 0; index < observations.size(); index++) {
+            Observation observation = observations.get(index);
             if (observation.date() == null || observation.date().isBefore(raw.period().start()) || observation.date().isAfter(raw.period().end())) continue;
-            Point point = point(observation);
+            // Python appends observations in acquisition order, so an index at or after since is new to the client.
+            Point point = point(observation, pixels && index >= since);
             days.merge(point.date(), point, (a, b) -> support(a, b) >= 0 ? a : b);
         }
         List<Point> points = List.copyOf(days.values());
@@ -98,11 +106,12 @@ public class FieldSeasonService {
         if (raw.grid() != null && !Boolean.TRUE.equals(raw.grid().interiorOnly())) notes.add(
                 "This field has too few interior pixels to exclude its edges; measurements may mix neighbouring land.");
         return new FieldSeasonResponse(fieldId, year, raw.jobId(), raw.status(), message, raw.period(), raw.progress(),
-                raw.grid(), points, List.copyOf(segments), List.copyOf(gaps), summary, ticks, List.copyOf(notes), raw.source(), failed, raw.error());
+                raw.grid(), points, List.copyOf(segments), List.copyOf(gaps), summary, ticks, List.copyOf(notes), raw.source(), failed, raw.error(),
+                raw.count() == null ? observations.size() : raw.count(), pixels ? raw.encoding() : null);
     }
 
     /** Preserves valid measured NDVI, while excluding unsupported observations from the plot and summaries. */
-    private static Point point(Observation observation) {
+    private static Point point(Observation observation, boolean withPixels) {
         double coverage = fraction(observation.coverageShare()), clear = fraction(observation.sampleClearShare());
         int pixels = observation.validPixels() == null ? 0 : observation.validPixels();
         boolean measured = observation.ndviMean() != null && Double.isFinite(observation.ndviMean())
@@ -124,7 +133,8 @@ public class FieldSeasonService {
         return new Point(observation.date(), observation.sceneId(), observation.sensor(), quality, description,
                 plotted ? observation.ndviMean() : null, plotted ? observation.ndviP10() : null,
                 plotted ? observation.ndviP90() : null, clear, fraction(observation.cloudShare()),
-                fraction(observation.snowShare()), fraction(observation.waterShare()), coverage, pixels);
+                fraction(observation.snowShare()), fraction(observation.waterShare()), coverage, pixels,
+                plotted ? observation.ndviP50() : null, withPixels ? observation.pixels() : null);
     }
 
     /** Chooses daily evidence by quality, valid-pixel share and coverage, never by the largest NDVI. */

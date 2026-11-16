@@ -330,12 +330,14 @@ public class DataBackendClient {
      * @param start first acquisition date
      * @param end last acquisition date
      * @param retry whether terminal failures should be retried
+     * @param pixels whether to include display pixels, the field mask and their encoding
      * @return acquired measurements and persisted progress
      */
-    public HlsAcquisitionResponse fieldSeason(String fieldId, java.time.LocalDate start, java.time.LocalDate end, boolean retry) {
+    public HlsAcquisitionResponse fieldSeason(String fieldId, java.time.LocalDate start, java.time.LocalDate end,
+            boolean retry, boolean pixels) {
         return execute(() -> restClient.get()
                 .uri(builder -> builder.path("/fields/{id}/season").queryParam("start", start)
-                        .queryParam("end", end).queryParam("retry", retry).build(fieldId))
+                        .queryParam("end", end).queryParam("retry", retry).queryParam("pixels", pixels).build(fieldId))
                 .retrieve().body(HlsAcquisitionResponse.class));
     }
 
