@@ -1,102 +1,113 @@
+# SpaceApps 2026 Application Backend
 
-## Field-season satellite evidence
+The application backend serves every request from the React frontend. It is the
+only path between the frontend and the Python data service, and it holds all of
+the application's logic: interpreting field data, judging crop suitability,
+planning crop rotations, pulling in Canadian regional and market data, and
+running the chat assistant.
 
-`GET /fields/{field_id}/season?year=2026` starts or polls HLS acquisition through
-Python. Omit `year` for the current UTC calendar year. Java chooses the inclusive
-period, assigns display quality, chooses the best-supported observation per day,
-and prepares `points`, gap-aware `segments`, `gaps`, axis ticks and observed
-summaries. The browser should render this contract without rebuilding these rules.
+## What it is responsible for
 
-Clear daily observations require at least 70% valid sample pixels, 90% field
-coverage and three measured native pixels. Partial observations need 20% valid
-sample pixels and are displayed separately; they do not enter peak/latest
-summaries. Snow, water and unsupported passes have null plotted NDVI. Clear line
-segments stop across gaps longer than 20 days. Daily selection follows support,
-not maximum greenness. All numeric thresholds are presentation policies in
-`FieldSeasonService`, independent of Python's raster measurements.
+- **The single entry point for the frontend.** The frontend calls only this
+  backend. The data service is never exposed directly.
+- **Typed copies of every data-service route.** Each data-service response is
+  read into Java models and written out again, not forwarded as-is, so logic can
+  be added in the service layer.
+- **Interpretation.** Turning raw observations into farmer-facing meaning, for
+  example crop groups and rotation patterns from crop maps, or display quality,
+  gaps and summaries for season charts.
+- **Planning and decision support.** Crop suitability, rotation planning and
+  comparison of strategies.
+- **Other non-NASA data the application needs**, fetched directly.
+- **The AI chat assistant** and its tools.
 
-Statuses are `queued`, `running`, `done`, `partial` and `failed`; poll the first
-two. `retry=true` retries a terminal acquisition, reusing Python's raster cache.
-No request waits for the entire season. No crop, harvest or planting date is
-inferred from this endpoint. Quality notes and provenance accompany every result.
-Existing crop-history inference remains separate.
+The frontend only displays results; any calculation happens here.
 
-Python must provide `/fields/{field_id}/season` on the existing `data.backend.url`.
-No new application property is required. Service checks are in
-`FieldSeasonServiceUnitTest`.
+## Field data
 
-## Random rotation comparison demo
+| Route | Description |
+|---|---|
+| `GET /fields`, `GET /fields/{id}` | Field outlines for the map, and everything known about one field gathered into one response. A source that fails is reported as unavailable rather than failing the request. |
+| `/field-summary`, `/agro-weather`, `/daily-point`, `/soil-moisture`, `/drought-indicators` | Climate, water and drought data, from the data service |
+| `/soil`, `/fields/soil` | Soil properties, from the data service |
+| `/crop-history`, `/fields/crop-history` | What was grown each year, with crop groups and rotation patterns worked out here |
+| `/crop-calendar`, `/greenness`, `/vegetation-history` | Planting dates and vegetation trends, from the data service |
+| `GET /fields/{id}/season` | One season's satellite greenness, prepared for charting: quality grading, one best observation per day, gaps and summaries. It does not guess planting or harvest dates. |
+| `/imagery`, `GET /imagery/image` | Satellite images of a field. Images are fetched through this backend, and only from the expected Planetary Computer address. |
+| `/field-coverage`, `/health`, `/ready` | Data coverage and service status |
 
-With `crop.planner.strategy=random`, `POST /crop-optimization` accepts any nonblank
-`currentCrop` answer, including `Pasture`, `Not sure`, `Nothing planted` and custom
-names. Known crop IDs are still resolved to catalog display names. Growable crops
-remain validated against `GET /crops`.
+## Data from other sources
 
-Each field includes `alternatives`: three distinct five-year sequences with titles,
-summaries, hypothetical benefits, tradeoffs and per-year `rationale`. A one-crop
-pool can only produce one distinct sequence; the frontend uses the full catalog
-and always receives three. The existing `years` property mirrors the first option
-for consumers that expect one sequence. Numeric soil and income scores remain absent.
-Explanations are explicitly demo content and do not establish field suitability.
+These come from Canadian public services. The data service is not involved:
+
+| Route | Source | Provides |
+|---|---|---|
+| `GET /soil-landscape` | Agriculture and Agri-Food Canada (CanSIS, agri-environmental indicators) | Land capability class and limitations, drainage, erosion risk, soil cover days, organic carbon change, residual nitrogen |
+| `GET /seasonal-outlook` | Environment and Climate Change Canada, CanSIPS via MSC GeoMet | Chances of above- or below-normal temperature and precipitation over the coming months |
+| `GET /crops/market` | Statistics Canada | Recent provincial yields and farm prices per crop, and gross revenue estimates |
+
+All three cover Canada only.
+
+## Crops and rotation planning
+
+- `GET /crops` and `GET /crops/reference` return the crop catalog. Each crop's
+  climate and soil needs come from FAO ECOCROP. Nitrogen, residue, disease and
+  margin values are estimates still to be reviewed.
+- `POST /crop-optimization` takes one or more fields, the crop in each now, the
+  crops the farmer can grow and the farmer's priorities, and returns a five-year
+  plan per field with alternatives to compare.
+
+The planner is chosen with `crop.planner.strategy`:
+
+| Strategy | Behaviour |
+|---|---|
+| `random` (default) | Placeholder rotations with demo explanations |
+| `mock` | Varied, repeatable demo plans. Not calculated from field data. |
+| `dynamic` | Finds the best-scoring five-year sequence. Each year's score blends **soil health** (disease pressure from repeating a crop family, nitrogen balance, residue and soil cover), **reliability** (how well the field's climate and soil suit the crop) and **income**, weighted by the farmer's priorities. |
+
+Crop suitability compares the field's growing-season temperature, rainfall,
+frost-free days, soil texture, drainage and land capability with each crop's
+needs. The weakest condition sets the result. Missing data never rules a crop
+out. The planner and the chat assistant share this check, so they give the same
+answer.
 
 ## Chat assistant
 
-`POST /chat/stream` answers a farmer's question as server-sent events, using Spring AI 2.0 with any
-OpenAI-compatible endpoint. The app sends what is on screen in `context`, so "this field" needs no
-explanation:
+`POST /chat/stream` (streamed) and `POST /chat` answer a farmer's questions in
+plain language, using Spring AI 2.0 with an OpenAI-compatible model.
+`DELETE /chat/{id}` clears a conversation. The app sends what is on screen
+(selected field, location, growable crops), so "this field" works without
+explanation.
 
-```json
-{"conversationId": null,
- "message": "What can you tell me about this field?",
- "context": {"selectedFieldId": "ON-12345",
-             "fields": [{"fieldId": "ON-12345", "name": "North 40", "currentCrop": "corn", "geometry": {...}}],
-             "location": {"lat": 44.35, "lon": -79.16}, "provinceCode": "ON",
-             "growableCrops": ["corn", "soybeans", "wheat"]}}
-```
+The model doesn't calculate anything itself. It calls tools that use the same
+services as the rest of the API:
 
-Each SSE `event:` name matches the `type` in its JSON `data:`. `meta` comes first and carries the
-`conversationId` to send next time. `model` and `fallback` say which model is answering. `token` events
-are Markdown pieces to append. `tool_call` and `tool_result` report each data lookup with a label to show
-while it runs. `proposal` is a rotation plan for the farmer to accept or reject in the app; nothing is
-saved by the backend. The stream ends with `done` or `error`. `POST /chat` returns the same reply gathered
-into one JSON object, and `DELETE /chat/{conversation_id}` clears a conversation's memory.
+- **Field data:** overview, soil, climate, crop history, weather, vegetation,
+  season greenness, drought
+- **Location data:** soil landscape, seasonal outlook, daily weather, nearby fields
+- **Crops:** catalog, profiles, planting calendars, market prices, suitability
+- **Planning:** propose a rotation, compare rotations, find bare-field periods
+- **Explanations:** glossary of terms (NDVI, evapotranspiration, frost risk and so
+  on), data sources, today's date
 
-The model's tools call the existing services and the app's own calculations; the model only explains:
+A proposed rotation comes back as a `proposal` event for the farmer to accept or
+reject in the app; the backend saves nothing. If a model fails before answering,
+the next configured fallback model takes over.
 
-| Tools | What they do |
-|---|---|
-| `getFieldOverview`, `getFieldSoil`, `getFieldClimate`, `getCropHistory`, `getAgroWeather` | Field data, shortened for the model |
-| `getVegetationTrend`, `getSeasonGreenness`, `getDroughtIndicators` | Slow satellite lookups (20-45 s first time) |
-| `getSoilLandscape`, `getSeasonalOutlook`, `getDailyWeather`, `findFieldsNear` | Location data; default to the pin or field |
-| `listCrops`, `getCropProfile`, `getCropCalendar`, `getMarketPrices` | Crop facts, soil roles, planting dates, prices |
-| `assessCropSuitability` | Climate and soil fit per crop (`CropSuitabilityAssessor`, shared with the optimizer) |
-| `proposeRotationPlan` | Runs the configured planner and sends a `proposal` event |
-| `compareRotations` | Scores the farmer's rotations and the optimized one with the optimizer's terms |
-| `findBareFieldWindows` | Off-season gaps from the crop calendar, optionally MODIS low-cover windows |
-| `explainTerm`, `getDataSources`, `getCurrentDate` | Glossary (`chat/glossary.json`), sources (`chat/data-sources.json`), date |
+## Supporting, not replacing, local judgement
 
-A field id left empty means the selected field. Tools also receive the request context through Spring AI's
-`ToolContext`, which is never sent to the model.
+Results combine regional satellite data, models and estimates. Every plan and
+answer includes its assumptions and gaps. Field-level decisions still need the
+farmer's knowledge, soil tests and local agronomic advice.
 
-If a model fails with a timeout, connection error, HTTP 408/409/429 or 5xx before anything visible was
-streamed, the next model in `chat.fallback-models` answers instead. After the first token, tool call or
-proposal, the reply ends with `error` rather than switching models. Memory (the last
-`chat.memory.max-messages` messages per conversation, in memory) only records completed turns.
+OpenAPI docs are generated from the controllers and served by Swagger UI.
 
-Configuration, in the external secrets file:
+## AI Usage
 
-```properties
-# Include the API version path: Spring AI 2.0 uses the official OpenAI SDK, which does not add /v1
-spring.ai.openai.base-url=https://your-endpoint/v1
-spring.ai.openai.api-key=...
-spring.ai.openai.chat.model=primary-model
-# Optional, tried in order; base-url and api-key default to the primary's
-chat.fallback-models[0].model=fallback-model
-chat.fallback-models[1].model=other-model
-chat.fallback-models[1].base-url=https://other-endpoint/v1
-chat.fallback-models[1].api-key=...
-```
+AI was used during this project for:
 
-`application.properties` sets a placeholder key so the application starts without one. It also sets the
-temperature, fast retries, tool-call limits and a 5-minute async request timeout for long streams. Tests
-use a scripted `ChatModel` through a real `ChatClient`, so no provider is called.
+- Brainstorming and ideas
+- Research
+- Data interpretation
+- Code generation
+- Writing and editing
