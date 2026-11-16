@@ -1,0 +1,164 @@
+{
+  "terms": [
+    {
+      "id": "ndvi",
+      "term": "NDVI (Normalized Difference Vegetation Index)",
+      "aliases": ["greenness", "vegetation index", "ndvi"],
+      "explanation": "A satellite measure of how green and dense plants are, from how much red light leaves absorb compared with near-infrared light they reflect. It runs from about -1 to 1: bare soil is usually 0.1-0.2, a full green crop 0.7-0.9.",
+      "whyItMatters": "Shows when a crop greens up, peaks and dries down, how this season compares with others, and when the field is bare. A drop during the season can signal drought, disease or damage, but clouds, snow and mixed pixels can also lower it.",
+      "learnMore": "https://earthobservatory.nasa.gov/features/MeasuringVegetation"
+    },
+    {
+      "id": "evapotranspiration",
+      "term": "Evapotranspiration (ET)",
+      "aliases": ["et", "evaporation", "transpiration", "water use"],
+      "explanation": "The water that leaves a field as vapour: evaporation from the soil plus transpiration through plant leaves. Reported in millimetres, like rainfall.",
+      "whyItMatters": "Comparing ET with rainfall shows whether a crop's water needs are being met. Actual ET well below potential ET means plants were short of water.",
+      "learnMore": "https://www.fao.org/4/x0490e/x0490e04.htm"
+    },
+    {
+      "id": "reference-evapotranspiration",
+      "term": "Reference evapotranspiration (ET0)",
+      "aliases": ["et0", "eto", "potential evapotranspiration", "pet"],
+      "explanation": "How much water a well-watered reference grass would use given the weather (sun, temperature, wind and humidity). A crop's own need is ET0 times a crop coefficient for its growth stage.",
+      "whyItMatters": "A high ET0 means hot, dry, windy or sunny weather that pulls water from crops quickly. It is the basis for irrigation scheduling and water-balance estimates.",
+      "learnMore": "https://www.fao.org/4/x0490e/x0490e04.htm"
+    },
+    {
+      "id": "soil-moisture",
+      "term": "Soil moisture and soil wetness",
+      "aliases": ["soil wetness", "gwetroot", "root zone", "surface soil moisture", "smap"],
+      "explanation": "How much water the soil holds. Surface moisture covers the top few centimetres; root-zone moisture the top metre or so where crop roots draw water. NASA POWER reports wetness from 0 (dry) to 1 (saturated); NASA SMAP measures surface moisture from space.",
+      "whyItMatters": "Root-zone moisture decides whether a crop can keep growing through dry spells. Surface moisture matters for planting, germination and field access.",
+      "learnMore": "https://smap.jpl.nasa.gov/"
+    },
+    {
+      "id": "soil-moisture-anomaly",
+      "term": "Soil moisture anomaly and percentile",
+      "aliases": ["anomaly", "percentile", "drier than usual", "wetter than usual"],
+      "explanation": "How today's soil moisture compares with the same time of year in past years. A percentile of 20 means only 20% of past years were drier at this time; 80 means only 20% were wetter.",
+      "whyItMatters": "Raw moisture values differ by soil type, so comparing a place with its own history is a better guide to drought or waterlogging than the value alone.",
+      "learnMore": "https://nasagrace.unl.edu/"
+    },
+    {
+      "id": "water-balance",
+      "term": "Water balance",
+      "aliases": ["water deficit", "water surplus", "rain minus et", "climatic water balance"],
+      "explanation": "Rainfall minus evapotranspiration over a period. Negative means the weather took more water than it gave, so crops relied on stored soil water or irrigation; positive means water was left to soak in or run off.",
+      "whyItMatters": "A growing season that often ends in deficit favours drought-tolerant or deep-rooted crops and practices that keep soil covered and conserve water.",
+      "learnMore": "https://power.larc.nasa.gov/"
+    },
+    {
+      "id": "groundwater",
+      "term": "Groundwater storage (GRACE)",
+      "aliases": ["grace", "grace-fo", "groundwater", "water storage"],
+      "explanation": "NASA's GRACE and GRACE-FO satellites measure tiny changes in Earth's gravity caused by water moving underground. Models turn that into groundwater and soil moisture compared with past years. Each value covers about 25 km.",
+      "whyItMatters": "Shows long-term drying or recharge of the water a region's wells and deep roots rely on, which single seasons of rainfall can hide.",
+      "learnMore": "https://grace.jpl.nasa.gov/"
+    },
+    {
+      "id": "frost-risk",
+      "term": "Frost risk, frost dates and frost-free season",
+      "aliases": ["frost", "last frost", "first frost", "frost-free days", "growing season length"],
+      "explanation": "The last spring frost and first fall frost are the days the air temperature last and first drops to 0 °C. The days between are the frost-free season. They vary from year to year, so they are given as typical dates and ranges.",
+      "whyItMatters": "A crop needs a frost-free season longer than its time to maturity. Planting before the usual last frost or choosing a long-season crop raises the risk of frost damage.",
+      "learnMore": "https://power.larc.nasa.gov/"
+    },
+    {
+      "id": "heat-stress",
+      "term": "Heat stress",
+      "aliases": ["hot days", "heat", "high temperature"],
+      "explanation": "Days hot enough to harm a crop, often counted as days above 30-35 °C. The harm depends on the crop and its stage: heat at flowering cuts yields most.",
+      "whyItMatters": "Fields with more frequent heat stress favour heat-tolerant crops and planting dates that keep flowering out of the hottest weeks.",
+      "learnMore": "https://power.larc.nasa.gov/"
+    },
+    {
+      "id": "crop-heat-units",
+      "term": "Crop heat units (CHU) and growing degree days",
+      "aliases": ["chu", "gdd", "growing degree days", "heat units"],
+      "explanation": "A running total of how warm the season has been, used to match crop varieties to a region. Corn and soybean hybrids in Canada are rated by the CHU they need to mature.",
+      "whyItMatters": "Choosing a variety that needs fewer heat units than a field usually gets reduces the risk of an immature crop at frost.",
+      "learnMore": "https://www.ontario.ca/page/crop-heat-units"
+    },
+    {
+      "id": "land-capability",
+      "term": "Land capability class (Canada Land Inventory)",
+      "aliases": ["cli", "land class", "capability class"],
+      "explanation": "A national rating of land for agriculture from class 1 (no significant limits) to 7 (no capability for crops). Letters give the limitation, such as T for topography, W for excess water or S for soil. It is mapped at 1:250,000, so a field can differ from its area.",
+      "whyItMatters": "Classes 1-3 suit sustained annual cropping; 4 is marginal; 5-6 suit perennial forage; 7 is not suited to crops.",
+      "learnMore": "https://sis.agr.gc.ca/cansis/nsdb/cli/index.html"
+    },
+    {
+      "id": "soil-drainage",
+      "term": "Soil drainage class",
+      "aliases": ["drainage", "poorly drained", "well drained", "tile drainage"],
+      "explanation": "How quickly water leaves the soil: rapidly, well, imperfectly or poorly drained. Poorly drained soils stay wet in spring; rapidly drained ones dry out fast.",
+      "whyItMatters": "Many crops dislike wet feet. Tile drainage can change a field's effective drainage, so local knowledge of the field matters more than the regional map.",
+      "learnMore": "https://sis.agr.gc.ca/cansis/nsdb/slc/index.html"
+    },
+    {
+      "id": "soil-organic-matter",
+      "term": "Soil organic matter and organic carbon",
+      "aliases": ["organic matter", "organic carbon", "som", "soc", "carbon"],
+      "explanation": "The decomposed plant and animal material in soil; about half of it is carbon. Many cropped soils have 2-5% organic matter.",
+      "whyItMatters": "Organic matter holds water and nutrients, binds soil into crumbs that resist erosion and improves infiltration. Crop residue, perennials, cover crops and manure build it; bare soil and heavy tillage lose it.",
+      "learnMore": "https://www.soilgrids.org/"
+    },
+    {
+      "id": "nitrogen-fixation",
+      "term": "Nitrogen fixation",
+      "aliases": ["nitrogen-fixing", "legume", "n fixation", "fixes nitrogen"],
+      "explanation": "Legumes such as soybeans, alfalfa, peas and clover host bacteria in root nodules that turn nitrogen from the air into a form plants use.",
+      "whyItMatters": "A legume needs little nitrogen fertilizer and can leave nitrogen for the next crop, especially a perennial like alfalfa, cutting fertilizer cost for crops such as corn that follow it.",
+      "learnMore": "https://www.fao.org/soils-portal/en/"
+    },
+    {
+      "id": "cover-crop",
+      "term": "Cover crop",
+      "aliases": ["cover crops", "catch crop", "green manure"],
+      "explanation": "A crop grown mainly to protect and feed the soil rather than to sell, often sown after harvest to cover ground that would otherwise be bare. Examples are cereal rye, oats, clover and radish.",
+      "whyItMatters": "Cover crops reduce erosion, catch leftover nitrogen, add organic matter, improve infiltration and can break pest cycles. They need a long enough window after harvest and suitable moisture to establish.",
+      "learnMore": "https://www.sare.org/resources/cover-crops/"
+    },
+    {
+      "id": "deep-rooting",
+      "term": "Deep-rooting crops",
+      "aliases": ["deep roots", "deep rooted", "taproot"],
+      "explanation": "Crops whose roots reach below about 1.5 m, such as alfalfa and some cereals and brassicas.",
+      "whyItMatters": "Deep roots reach water and nutrients other crops miss, break up compacted layers and leave channels that help water soak in, which makes the next crop more resilient in dry spells.",
+      "learnMore": "https://www.fao.org/soils-portal/en/"
+    },
+    {
+      "id": "crop-rotation",
+      "term": "Crop rotation and pest-cycle breaks",
+      "aliases": ["rotation", "pest cycle", "disease break", "monoculture"],
+      "explanation": "Growing different crops in a field in successive years. Crops in the same family share many pests and diseases, so following one with a different family 'breaks' their life cycle.",
+      "whyItMatters": "Rotations reduce pest and disease pressure, balance nitrogen and spread risk across crops and markets. Repeating the same crop or family raises these risks.",
+      "learnMore": "https://www.sare.org/resources/crop-rotation-on-organic-farms/"
+    },
+    {
+      "id": "erosion-risk",
+      "term": "Erosion risk",
+      "aliases": ["erosion", "soil loss", "runoff"],
+      "explanation": "How likely soil is to be washed or blown away. It rises with slope, bare ground, intense rain and light or fine soils. NASA SRTM elevation data gives slope; AAFC maps give regional erosion risk.",
+      "whyItMatters": "Erosion removes the most fertile topsoil. Keeping the ground covered with perennials, cover crops or residue protects erosion-prone fields.",
+      "learnMore": "https://www2.jpl.nasa.gov/srtm/"
+    },
+    {
+      "id": "satellite-vs-ground",
+      "term": "Satellite data versus ground measurements",
+      "aliases": ["satellite", "remote sensing", "ground truth", "accuracy", "resolution"],
+      "explanation": "Satellites see large areas often and consistently, but each value averages a pixel (10 m for Sentinel-2, 250-500 m for MODIS, 9-36 km for SMAP, about 50 km for NASA POWER weather) and can be blocked by clouds or snow. Ground measurements such as soil tests, rain gauges and yield monitors are exact for one spot but sparse.",
+      "whyItMatters": "Satellite and model data are best for patterns, history and comparisons; a farmer's own records and soil tests are best for exact values. Combining both, for example checking a satellite soil estimate with a soil test, gives the most reliable picture.",
+      "learnMore": "https://www.earthdata.nasa.gov/learn/backgrounders/remote-sensing"
+    },
+    {
+      "id": "seasonal-outlook",
+      "term": "Seasonal outlook",
+      "aliases": ["outlook", "seasonal forecast", "probabilistic forecast"],
+      "explanation": "Chances that the next few months will be above, near or below normal for temperature and precipitation. Equal chances (about 33% each) mean there is no clear signal.",
+      "whyItMatters": "An outlook leaning dry or warm can tip choices towards drought-tolerant crops or earlier planting, but it describes odds, not certain weather.",
+      "learnMore": "https://weather.gc.ca/saisons/index_e.html"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "sources": [
+    {
+      "id": "nasa-power",
+      "name": "NASA POWER",
+      "provider": "NASA Langley Research Center",
+      "measures": "Daily and long-term weather and climate: temperature, rainfall, humidity, wind, solar radiation, soil wetness and reference evapotranspiration.",
+      "resolution": "About 50 km grid; daily since 1981.",
+      "usedFor": ["climate summary", "frost dates", "water balance", "heat stress", "agro-weather", "daily weather"],
+      "limitations": "Model and satellite estimates for a large grid cell, not a weather station on the farm. Rainfall in thunderstorms can differ a lot over short distances. The last few days may be missing.",
+      "url": "https://power.larc.nasa.gov/"
+    },
+    {
+      "id": "nasa-srtm",
+      "name": "NASA SRTM elevation",
+      "provider": "NASA / USGS",
+      "measures": "Ground elevation, from which slope, low spots and erosion rating are worked out.",
+      "resolution": "About 30 m.",
+      "usedFor": ["terrain", "erosion rating", "low spots"],
+      "limitations": "Measured in 2000; does not see tile drains, small ditches or recent land levelling.",
+      "url": "https://www2.jpl.nasa.gov/srtm/"
+    },
+    {
+      "id": "nasa-modis",
+      "name": "NASA MODIS",
+      "provider": "NASA",
+      "measures": "Vegetation greenness (NDVI) every 16 days, yearly productivity and actual and potential evapotranspiration.",
+      "resolution": "250-500 m; since 2000.",
+      "usedFor": ["vegetation history", "green-up and harvest timing", "bare-ground windows"],
+      "limitations": "A pixel can include neighbouring fields, trees or roads, so small fields are blended with their surroundings.",
+      "url": "https://modis.gsfc.nasa.gov/"
+    },
+    {
+      "id": "nasa-grace",
+      "name": "NASA GRACE / GRACE-FO drought indicators",
+      "provider": "NASA and the National Drought Mitigation Center",
+      "measures": "Groundwater, root-zone and surface soil moisture as percentiles against past years, weekly.",
+      "resolution": "About 25 km (0.25 degree), weekly.",
+      "usedFor": ["drought indicators", "long-term water trends"],
+      "limitations": "Regional; a single field's moisture can differ, especially with irrigation or drainage.",
+      "url": "https://nasagrace.unl.edu/"
+    },
+    {
+      "id": "sentinel-2",
+      "name": "Sentinel-2 (via NASA HLS)",
+      "provider": "ESA Copernicus, harmonized by NASA",
+      "measures": "Field-scale greenness (NDVI) through the season.",
+      "resolution": "10-30 m, every few days when not cloudy.",
+      "usedFor": ["season greenness", "current crop condition"],
+      "limitations": "Clouds, haze and snow block or distort observations, so there can be gaps of weeks.",
+      "url": "https://hls.gsfc.nasa.gov/"
+    },
+    {
+      "id": "soilgrids",
+      "name": "SoilGrids",
+      "provider": "ISRIC World Soil Information",
+      "measures": "Soil pH, texture (clay, sand, silt), organic carbon, nitrogen and cation exchange capacity by depth.",
+      "resolution": "250 m.",
+      "usedFor": ["field soil", "suitability", "rotation planning"],
+      "limitations": "Predicted by a model from soil samples and environmental data, not measured in the field. A soil test is more accurate.",
+      "url": "https://www.soilgrids.org/"
+    },
+    {
+      "id": "aafc-aci",
+      "name": "AAFC Annual Crop Inventory",
+      "provider": "Agriculture and Agri-Food Canada",
+      "measures": "Which crop was grown, mapped from satellite images each year since 2009.",
+      "resolution": "30 m.",
+      "usedFor": ["crop history", "rotation pattern"],
+      "limitations": "Classification can be wrong for small, mixed or unusual crops; the farmer's own records are more reliable.",
+      "url": "https://open.canada.ca/data/en/dataset/ba2645d5-4458-414d-b196-6303ac06c1c9"
+    },
+    {
+      "id": "aafc-slc",
+      "name": "AAFC Soil Landscapes of Canada and Canada Land Inventory",
+      "provider": "Agriculture and Agri-Food Canada",
+      "measures": "Land capability class, dominant drainage, and agri-environmental indicators such as erosion risk, soil organic carbon change and residual nitrogen.",
+      "resolution": "Regional maps at 1:250,000 to 1:1,000,000.",
+      "usedFor": ["soil landscape", "suitability", "rotation planning"],
+      "limitations": "Describes the dominant soils of an area; a single field can be quite different.",
+      "url": "https://sis.agr.gc.ca/cansis/"
+    },
+    {
+      "id": "crop-calendar",
+      "name": "Global crop calendar",
+      "provider": "Global gridded crop calendar (see the response's citation)",
+      "measures": "Usual planting and maturity dates for major crops.",
+      "resolution": "About 0.5 degree.",
+      "usedFor": ["crop calendar", "bare-field windows", "growing months"],
+      "limitations": "Typical regional dates, not this farm's practice or this year's conditions.",
+      "url": null
+    },
+    {
+      "id": "eccc-outlook",
+      "name": "Environment and Climate Change Canada seasonal outlook",
+      "provider": "Environment and Climate Change Canada (GeoMet)",
+      "measures": "Chances of above-, near- or below-normal temperature and precipitation for coming seasons.",
+      "resolution": "About 100 km.",
+      "usedFor": ["seasonal outlook", "first-year rotation risk"],
+      "limitations": "Probabilities, not forecasts of specific weather; skill is modest, especially for precipitation.",
+      "url": "https://weather.gc.ca/saisons/index_e.html"
+    },
+    {
+      "id": "statcan",
+      "name": "Statistics Canada field crop yields and farm prices",
+      "provider": "Statistics Canada",
+      "measures": "Average yield per hectare and farm product prices by province.",
+      "resolution": "Province, yearly and monthly.",
+      "usedFor": ["market prices", "gross revenue estimates"],
+      "limitations": "Provincial averages, before costs. Local prices, contracts and yields differ.",
+      "url": "https://www150.statcan.gc.ca/"
+    },
+    {
+      "id": "fao-ecocrop",
+      "name": "FAO ECOCROP",
+      "provider": "Food and Agriculture Organization of the United Nations",
+      "measures": "Each crop's optimal and tolerated pH, temperature, rainfall, cycle length, soil texture and drainage.",
+      "resolution": "Per crop species, not per variety.",
+      "usedFor": ["crop profiles", "suitability", "rotation planning"],
+      "limitations": "Global species ranges; modern varieties may tolerate more or less than listed.",
+      "url": "https://gaez.fao.org/pages/ecocrop"
+    },
+    {
+      "id": "app-estimates",
+      "name": "This app's crop estimates",
+      "provider": "SpaceApps 2026 team",
+      "measures": "Nitrogen fixed and needed, residue, months of ground cover, net margin and disease susceptibility per crop.",
+      "resolution": "One value per crop.",
+      "usedFor": ["rotation scoring", "income estimates"],
+      "limitations": "Illustrative placeholders chosen to be plausible for southern Ontario. Not sourced; need agronomist review.",
+      "url": null
+    }
+  ]
+}
